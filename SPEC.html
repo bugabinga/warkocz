@@ -277,6 +277,11 @@ Numeric caps require measurement and owner approval before architecture acceptan
 </tbody>
 </table></div>
 <ul>
+<li>Use data-oriented design for performance-critical paths: compact contiguous storage, cache-friendly traversal, batching, and separation of hot/cold data.
+Choose array-of-structures versus structure-of-arrays layouts by actual access patterns; minimize pointer chasing, redundant copies, and false sharing.</li>
+<li>Leverage SIMD for suitable bulk operations through compiler vectorization or explicit vector code, with measured benefit over a scalar baseline.
+Respect alignment and buffer bounds, handle vector tails, and preserve exact semantics.
+Keep portable scalar fallbacks and safe CPU-feature dispatch where required; distributed binaries must not assume the build machine's instruction set.</li>
 <li>Acceptance measures the shipped ReleaseSafe artifact with always-active programmer-invariant checks.
 App pools/device/pipeline initialization required for usability count toward startup, including driver work.</li>
 <li>Hyperfine orchestrates repeated runs and raw export; actual endpoint timestamps are authoritative, excluding wrapper/cleanup time.
@@ -329,7 +334,7 @@ Unverified requirements remain incomplete; screenshots alone do not establish co
 <tr><td><a href="#semantics">Language</a>, <a href="#interface">UI</a></td><td>Multi-file unsaved LSP behavior and stale replies; declared language capabilities/fallbacks; action-registry coverage; owner review of Nugu dark/light, JetBrains Mono/icon fallback, workflow-based type hierarchy, minimal chrome and delightful feedback; IME, mixed DPI, zoom, ligatures, accessibility, reduced motion and non-color cues.</td></tr>
 <tr><td><a href="#recovery">Recovery</a>, <a href="#security">trust</a>, <a href="#architecture">boundaries</a></td><td>Seeded deterministic core simulation of clock/scheduling/filesystem/process/IPC faults; crash/save/cancel/OOM/stale-generation/lease races; revocation, offline operation, secret-safe storage, concurrency and graphics failure.
 Real native/Git integration remains independently required.</td></tr>
-<tr><td><a href="#performance">Resources</a></td><td>Startup/input/frame traces and raw statistics; post-init backing-allocation traps, pool/leak audits, long lines, undo/cache/snapshot pressure, late accessibility activation, GPU stress and worker churn.</td></tr>
+<tr><td><a href="#performance">Resources</a></td><td>Startup/input/frame traces and raw statistics; post-init backing-allocation traps, pool/leak audits, long lines, undo/cache/snapshot pressure, late accessibility activation, GPU stress and worker churn; scalar/SIMD equivalence across empty, short, unaligned, and tail inputs; measured data-layout/vectorization gains with cache/memory behavior and supported CPU features recorded.</td></tr>
 <tr><td><a href="#scope">Platforms</a>, <a href="#delivery">delivery</a></td><td>Native packaged execution on required OS/display combinations without developer runtime; delegated build/CI steps; tool/dependency locks, shader artifacts, provenance/notices, manual replacement and protected-state behavior.</td></tr>
 </tbody>
 </table></div>

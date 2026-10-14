@@ -17,8 +17,9 @@ The goal: a native graphical Git client built around the hardest part of version
 
 > [!IMPORTANT]
 > **Bootstrap, not a usable Git client yet.**
-> The executable prints its status and rejects unsupported invocations.
-> No GUI, repository mutations, structural merge, or LSP integration is implemented.
+> The executable prints status/help/version and rejects diff/merge execution before opening files.
+> Tested in-memory byte editing, conservative text merge, resolution history, and safety primitives exist; they are not connected to a GUI.
+> No GUI, repository mutations, structural merge, durable recovery, or LSP integration is implemented.
 > The artwork above is branding, not an application screenshot.
 
 ## The direction
@@ -39,11 +40,14 @@ Windows, Linux with Wayland/X11, and macOS are completion targets, **not current
 - [x] Product and engineering specification.
 - [x] Zig bootstrap with ReleaseSafe default.
 - [x] mise tool registry and thin Zig build delegation.
-- [x] Executable checks for bootstrap output and rejected merge invocation.
+- [x] Executable checks for status/help/version, unavailable operations, and argument exhaustion.
+- [x] Bounded byte editing, conservative single-range merge, in-memory resolution/undo, snapshot leases, lexical paths, and invocation parsing.
+- [x] Hosted core-check workflow definition; not product acceptance.
 - [ ] Native rendering, typography, accessibility, and input feasibility.
 - [ ] Editor, Git integration, structural engines, LSP, and recovery.
-- [ ] Product acceptance, benchmarks, CI, and release packages.
+- [ ] Product acceptance, native GUI CI, benchmarks, and release packages.
 
+[Implementation evidence and remaining gates](IMPLEMENTATION.md) distinguish internal primitives from usable product capabilities.
 No performance target or product capability is claimed from scaffold tests.
 
 ## Development
@@ -56,9 +60,9 @@ The scaffold has no third-party application dependencies.
 | :--- | :--- | :--- |
 | `mise run build` | `zig build` | Builds the bootstrap into `zig-out/bin`. |
 | `mise run run` | `zig build run` | Prints bootstrap status; no window or repository access. |
-| `mise run test` | `zig build test` | Checks output and rejection of unsupported merge invocation. |
+| `mise run test` | `zig build test` | Runs bounded core tests and executable invocation contracts. |
 | `mise run fmt` | `zig build fmt` | Formats Zig source/build files. |
-| `mise run check` | `zig build check` | Checks formatting and bootstrap behavior. |
+| `mise run check` | `zig build check` | Checks formatting, bounded core, and executable behavior. |
 
 ReleaseSafe is spelled `safe` in Zig 0.17; Debug is available through `-Doptimize=debug`.
 Unsafe optimization modes are rejected.
@@ -71,10 +75,11 @@ Tool-download integrity metadata and the complete native dependency graph remain
 | Path | Responsibility |
 | :--- | :--- |
 | [SPEC.html](SPEC.html) | Binding completion contract. |
-| [src/main.zig](src/main.zig) | Bootstrap entry point. |
+| [src/main.zig](src/main.zig) | Bootstrap entry point; help/version and explicit execution refusal. |
+| [src/bytes.zig](src/bytes.zig), [src/session.zig](src/session.zig) | Exact byte edits and bounded in-memory resolution history. |
 | [src/ui](src/ui) | Future UI/editor; scoped guidance only today. |
-| [src/engine](src/engine) | Future structural workers; scoped guidance only today. |
-| [src/vcs](src/vcs) | Future Git integration; scoped guidance only today. |
+| [src/engine](src/engine) | Conservative text merge and snapshot lease protocol; no structural worker process yet. |
+| [src/vcs](src/vcs) | Lexical path checks; no Git backend yet. |
 | [tests/cli.zig](tests/cli.zig) | Executable checks owned by the Zig build graph. |
 | [bench](bench) | Benchmark guidance; no timing harness yet. |
 | [AGENTS.md](AGENTS.md) | Agent routing into scoped instructions and local skills. |
