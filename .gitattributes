@@ -1,0 +1,4 @@
+# Product specification and branding are documentation, not application code.
+SPEC.html linguist-documentation=true
+.github/assets/* linguist-documentation=true
+*.png binary
