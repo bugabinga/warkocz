@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible failure in implemented behavior.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        warkocz is currently a bootstrap, not a usable Git client.
+        Please report vulnerabilities privately and remove secrets from all examples.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal steps or synthetic input that reproduces the failure.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit, OS/architecture, Zig/mise versions, and display system if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Relevant output or screenshots; never private source, credentials, or decrypted files.

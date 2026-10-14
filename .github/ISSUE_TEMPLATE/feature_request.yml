@@ -1,0 +1,24 @@
+name: Design or feature proposal
+description: Propose a focused change to the product or implementation.
+title: "proposal: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Which workflow or requirement needs attention?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal and alternatives
+      description: Link the relevant specification section; distinguish new scope from existing requirements.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and tradeoffs
+      description: Fixtures, measurements, upstream references, or known safety/resource implications.

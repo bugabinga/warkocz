@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title description">
+<title id="title">warkocz · Untangle intent.</title>
+<desc id="description">A native, merge-first Git client in Zig. Early development. Three colored strands braid into one.</desc>
+<defs><clipPath id="top-crossing"><rect x="990" y="178" width="76" height="80"/></clipPath><clipPath id="lower-crossing"><rect x="990" y="330" width="76" height="80"/></clipPath></defs>
+<rect width="1280" height="640" fill="#121212"/>
+<path d="M80 78H1200" stroke="#242424" stroke-width="2"/>
+<text x="80" y="119" fill="#8b8b8b" font-family="JetBrains Mono, monospace" font-size="16" letter-spacing="2">NATIVE / MERGE-FIRST / ZIG</text>
+<text x="74" y="275" fill="#ededed" font-family="JetBrains Mono, monospace" font-size="108" font-weight="700" letter-spacing="-7">warkocz</text>
+<text x="80" y="343" fill="#b59ae4" font-family="JetBrains Mono, monospace" font-size="34" letter-spacing="-1">Untangle intent.</text>
+<text x="80" y="415" fill="#ededed" font-family="JetBrains Mono, monospace" font-size="22">A graphical Git client.</text>
+<text x="80" y="451" fill="#ededed" font-family="JetBrains Mono, monospace" font-size="22">Built around the merge.</text>
+<rect x="80" y="514" width="236" height="38" rx="19" fill="#242424"/>
+<circle cx="102" cy="533" r="4" fill="#d151d1"/>
+<text x="118" y="539" fill="#ededed" font-family="JetBrains Mono, monospace" font-size="14" letter-spacing="1">EARLY DEVELOPMENT</text>
+<text x="80" y="598" fill="#8b8b8b" font-family="JetBrains Mono, monospace" font-size="15">github.com/bugabinga/warkocz</text>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<path d="M900 142C900 218 1156 218 1156 294S900 370 900 446C900 490 1028 500 1028 534" stroke="#121212" stroke-width="40"/>
+<path d="M900 142C900 218 1156 218 1156 294S900 370 900 446C900 490 1028 500 1028 534" stroke="#d151d1" stroke-width="22"/>
+<path d="M1156 142C1156 218 900 218 900 294S1156 370 1156 446C1156 490 1028 500 1028 534" stroke="#121212" stroke-width="40"/>
+<path d="M1156 142C1156 218 900 218 900 294S1156 370 1156 446C1156 490 1028 500 1028 534" stroke="#7ba1aa" stroke-width="22"/>
+<path d="M1028 142V534" stroke="#121212" stroke-width="40"/>
+<path d="M1028 142V534" stroke="#b59ae4" stroke-width="22"/>
+<path d="M900 294C900 370 1156 370 1156 446" stroke="#121212" stroke-width="40" clip-path="url(#lower-crossing)"/>
+<path d="M900 294C900 370 1156 370 1156 446" stroke="#7ba1aa" stroke-width="22" clip-path="url(#lower-crossing)"/>
+<path d="M900 142C900 218 1156 218 1156 294" stroke="#121212" stroke-width="40" clip-path="url(#top-crossing)"/>
+<path d="M900 142C900 218 1156 218 1156 294" stroke="#d151d1" stroke-width="22" clip-path="url(#top-crossing)"/>
+</g>
+<circle cx="900" cy="142" r="16" fill="#121212" stroke="#d151d1" stroke-width="6"/>
+<circle cx="1028" cy="142" r="16" fill="#121212" stroke="#b59ae4" stroke-width="6"/>
+<circle cx="1156" cy="142" r="16" fill="#121212" stroke="#7ba1aa" stroke-width="6"/>
+<circle cx="1028" cy="534" r="18" fill="#b59ae4"/>
+</svg>

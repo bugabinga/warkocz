@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Binding implementation contract for warkocz, a native merge-first Git client.">
+<title>warkocz · Specification</title>
+<style>
+:root { color-scheme: light dark; font: 16px/1.6 system-ui, sans-serif; }
+body { max-width: 76rem; margin: auto; padding: 2rem; }
+a { color: light-dark(#174ea6, #a8c7fa); text-underline-offset: .2em; }
+a:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }
+h1 { font-size: 3rem; margin-bottom: .2rem; }
+h2 { line-height: 1.3; }
+header, section { border-bottom: 1px solid light-dark(#ccc, #555); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+section { scroll-margin-top: 1rem; }
+nav { display: flex; flex-wrap: wrap; gap: .5rem 1.3rem; margin: 2rem 0; }
+li { margin: .5rem 0; }
+code, kbd { font: .9em ui-monospace, monospace; overflow-wrap: anywhere; }
+.table { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: 1px solid light-dark(#ddd, #555); text-align: left; vertical-align: top; padding: .65rem; }
+.note { border-left: 3px solid currentColor; padding-left: 1rem; }
+@media (max-width: 600px) { body { padding: 1rem; } }
+@media print { nav { display: none; } body { max-width: none; padding: 0; } h2, h3 { break-after: avoid; } }
+</style>
+</head>
+<body>
+<header>
+<h1>warkocz</h1>
+<p>Native, open-source, merge-first graphical Git client.</p>
+<p>This is the completion contract, not a feature-status report.
+The initial scaffold does not implement the product.
+Changes to binding requirements require owner approval.</p>
+<p>Agent instructions: <a href="AGENTS.md">AGENTS.md</a>.
+Build/run status: <a href="README.md">README.md</a>.
+Owner: Oliver Jan Krylow.</p>
+</header>
+<nav aria-label="Specification sections">
+<a href="#scope">Scope</a>
+<a href="#vcs">Git</a>
+<a href="#merge">Diff &amp; merge</a>
+<a href="#files">File fidelity</a>
+<a href="#semantics">Language intelligence</a>
+<a href="#interface">Interface</a>
+<a href="#recovery">Recovery</a>
+<a href="#security">Trust</a>
+<a href="#integrations">Invocation</a>
+<a href="#architecture">Architecture</a>
+<a href="#performance">Allocation &amp; perf</a>
+<a href="#delivery">Build &amp; delivery</a>
+<a href="#acceptance">Acceptance</a>
+<a href="#open">Open decisions</a>
+</nav>
+<main>
+<section id="scope">
+<h2>Scope</h2>
+<p>Provide a full daily/advanced Git client combining editable two-way comparison, common-ancestor three-way merge, structural diff/merge, syntax presentation, and result-workspace LSP.
+Unsupported capabilities must degrade visibly to lossless text.
+The user judges behavioral correctness; the application does not prove program equivalence.</p>
+<ul>
+<li>Required platforms: Windows 11 x64; Ubuntu 24.04-class Linux x64, both Wayland and X11; macOS 14 ARM64.
+Other architectures are best effort.</li>
+<li>Core UI, engines, grammars, and highlighting are bundled and work offline without an IDE, Node/Python runtime, or developer toolchain.
+Installed Git may be required; detect its version/compatibility without changing global config.</li>
+<li>Initial delivery requires compatible GPU/driver support.
+Graphics initialization failure produces a native actionable error without opening or mutating repositories.
+A software renderer is not required.</li>
+<li>Project-owned code is MIT; required dependencies must have compatible open-source redistribution terms and notices.</li>
+</ul>
+<p><strong>Not required:</strong> full IDE, full jj client, AI-generated resolutions, cloud services/accounts, telemetry, collaboration, editable hex/image merge, or historical-revision LSP workspaces.</p>
+</section>
+
+<section id="vcs">
+<h2>Git workflows</h2>
+<div class="table"><table>
+<thead><tr><th>Area</th><th>Required operations</th></tr></thead>
+<tbody>
+<tr><td>Inspect</td><td>Open, clone/init, status, commit graph/history/search, file history, blame, revision and branch comparisons.</td></tr>
+<tr><td>Record</td><td>Stage/unstage files, hunks, selected lines; conflict-aware partial staging; commit, amend, fixup.</td></tr>
+<tr><td>Organize/share</td><td>Branch creation/switch/rename/delete; remote management; fetch/pull/push; stash create/inspect/apply/pop/drop; tags.</td></tr>
+<tr><td>Rewrite/integrate</td><td>Merge, interactive rebase/autosquash, cherry-pick, revert, interactive history editing, and correct abort/continue/skip transitions.</td></tr>
+<tr><td>Multiple workspaces</td><td>Linked worktrees, submodule inspection/management, operation-specific conflict sessions.</td></tr>
+</tbody>
+</table></div>
+<ul>
+<li>Default to a library backend; preflight mutations against effective config, hooks, attributes, filters, signing, credentials, and worktree state.
+Use installed Git where equivalence is unproven; block with a specific reason if neither backend can honor required behavior.</li>
+<li>Compatibility includes rejecting hooks, clean/smudge and required encryption filters, LFS, SSH/GPG signing, conditional config includes, credential helpers, and worktree-specific state.
+Required filter failure must never create plaintext objects.</li>
+<li>Explain backend choice and expose sanitized operation output.
+Upstream/push targets derive from effective Git config, not a hard-coded remote/branch.</li>
+<li>History rewrites, hard reset, deletion, discard, and remote force updates show affected scope and require deliberate confirmation.
+Force-push defaults to lease protection; distinguish local recovery from irreversible remote effects.</li>
+<li>Partial staging maps display selections to exact source/index bytes, never a lossy structural representation.</li>
+</ul>
+</section>
+
+<section id="merge">
+<h2>Diff &amp; merge</h2>
+<ul>
+<li>Two-way mode takes explicit inputs and writable destination.
+Three-way mode keeps base, both inputs, and editable result logically distinct, regardless of pane count.
+Source inputs remain read-only unless separately selected as writable destinations.</li>
+<li>Provide structural moved/reordered/edited-element views alongside exact text, word, and character views.
+Structural merge must demonstrate capability comparable to Mergiraf on reviewed representative fixtures.</li>
+<li>Text-clean and successful structural resolutions may be accepted automatically.
+Retain immutable input identities, original conflict, engine/version, resolution origin, final result, and reviewed/unreviewed status.</li>
+<li>Allow manual result editing, choosing either side/base/both where meaningful, resetting decisions, and revisiting automatic resolutions.
+Use Both is composition, not a correctness verdict.</li>
+<li>Support multi-file sessions with searchable file/conflict navigation, filters, unresolved counts, progress, and recovery.
+Label inputs by actual operation/ref roles, including rebase, rather than unexplained ours/theirs.</li>
+<li>Malformed source, unsupported grammar, parser/engine failure, timeout, and resource limits expose exact degraded capability and preserve user decisions.</li>
+<li>Multiple merge bases and strategy-specific Git cases require faithful handling or explicit Git fallback.
+Do not invent a single base or infer resolved state solely from conflict-marker scanning.</li>
+</ul>
+</section>
+
+<section id="files">
+<h2>File fidelity</h2>
+<ul>
+<li>Preserve bytes outside intentional edits, encoding, BOM, mixed CRLF/LF, final-newline state, comments, whitespace, and relevant metadata.
+Formatting, normalization, and encoding conversion are explicit actions, never incidental save effects.</li>
+<li>Whitespace/comment hiding and collapsed regions affect presentation only; hidden evidence remains revealable and preserved.
+Textconv output and shaped text are review views, not writable source.</li>
+<li>Detect binary/image content; provide safe previews where possible and explicit whole-side selection without destructive text conversion.</li>
+<li>Handle rename/delete, rename/rename, directory/file, symlink, executable-bit, and submodule conflicts explicitly through faithful backend support or Git fallback.</li>
+<li>Before mutation, detect case/Unicode collisions, reserved or unrepresentable paths, and platform filename restrictions.
+Report exact affected paths and a safe decision path.</li>
+</ul>
+</section>
+
+<section id="semantics">
+<h2>Language intelligence</h2>
+<ul>
+<li>Provide structural parsing and editor-quality syntax presentation.
+Expose highlighting, structural diff, structural merge, and LSP as separate per-language capabilities.</li>
+<li>Result-workspace LSP provides hover, definition navigation, references, symbols, and diagnostics with project paths/dependencies/config and synchronized unsaved edits.
+Version requests; discard stale replies.
+Diagnostics are advisory.</li>
+<li>Historical inputs are syntax/structure-only.
+Language services initialize asynchronously; missing/crashed servers and partially valid results do not gate basic reading/editing.</li>
+<li>Discover configured servers; installing language packs requires explicit consent with version, provenance, license, and capability information.
+Support user-defined grammar, extension/shebang, highlighting, engine, and server registrations under workspace trust controls.</li>
+<li>Engine interfaces expose structured changes/conflicts and source ranges, not only ANSI output.
+Capability-based engine choice must not imply universal language support.</li>
+</ul>
+<p><strong>Acceptance matrix:</strong> Java, Kotlin, JavaScript, TypeScript, Rust, Lua, Zig, Nushell, JSON, YAML, TOML; C, C++, C#, Go, Python; HTML, XML, CSS, Markdown; custom packs.</p>
+<p>Every listed language requires rendering/editing, exact preservation, truthful capability declarations, and explicit unsupported-case fallback.
+Representative languages must demonstrate each structural/LSP feature in complete multi-file projects, including embedded-language boundaries, syntax errors, and missing-server degradation.
+First structural fixtures target Zig and JSON; this does not reduce the complete matrix.</p>
+</section>
+
+<section id="interface">
+<h2>Interface &amp; actions</h2>
+<ul>
+<li>Use a modern, minimal-chrome, result-centered adaptive layout with selectable base-to-input/result comparisons, expandable context, synchronized panes, optional four-version overview, and persistent pane/layout preferences.
+Prioritize reading changes and resolving conflicts over toolbars, borders, and decorative panels; keep essential actions discoverable.</li>
+<li>Default to JetBrains Mono with a bundled Nerd Fonts icon fallback.
+Use the icon fallback for icon glyphs, not ordinary code text; icons retain accessible names and must not be the sole explanation of unfamiliar actions.
+Initially fonts are bundled only, with licensed coverage/fallback; family selection is within that bundle.</li>
+<li>Typography must be state-of-the-art, legible, and crisp.
+Choose a coherent size/weight/line-height hierarchy by workflow importance: result code and active conflicts receive primary reading space, file/navigation headings establish orientation, and secondary metadata is quieter but never tiny or low-contrast.
+Keep comparison panes at matching code sizes; adapt to DPI, window size, and user zoom rather than shrinking primary content to fit chrome.
+Preserve configurable font sizes, optional ligatures, accurate caret/selection alignment, Unicode/graphemes, tabs, long lines, wrapping/scrolling, and IME.</li>
+<li>Default to Nugu dark/light themes, following system appearance with manual override.
+Preserve Nugu semantic palette roles and contrast policy across syntax/diff/conflict/focus/diagnostics.
+Provide accessible labels, screen-reader semantics, visible keyboard focus, and meaning without color alone.</li>
+<li>Make the product fun and lovable through thoughtful details, friendly concise language, satisfying feedback, and a consistent visual personality.
+Delight must not distract from risky merge decisions, obscure errors, delay input, or weaken confirmations; any nonessential motion respects reduced-motion preferences.</li>
+<li><kbd>Ctrl+P</kbd> opens universal fuzzy action search from every normal context, including on macOS.
+Every action has name, aliases, help, binding, availability, and disabled reason; help is visible before execution.</li>
+<li>Palette, menus, mouse, keys, and context help share one action model and safety checks.
+No primary workflow requires a terminal or undocumented chord.</li>
+<li>Custom modal navigation/editing has visible mode, mnemonic discovery, full remapping, and key-conflict diagnostics.
+Preserve ordinary selection/editing, clipboard, undo/redo, mouse parity, and IME composition; no required Vim diff keymap.</li>
+<li>Keep hidden regions, formatting-only changes, base visibility, stale results, and unresolved decisions discoverable.</li>
+</ul>
+</section>
+
+<section id="recovery">
+<h2>State, recovery &amp; cancellation</h2>
+<ul>
+<li>One application-state owner applies versioned worker results.
+Detect external file/index/HEAD/operation changes; serialize mutations sharing Git common-directory resources and coordinate locks across worktrees.</li>
+<li>Atomically save results after checking current input/index/HEAD/operation state.
+External edits and stale drafts require deliberate reconciliation; never overwrite newer state silently.</li>
+<li>Persist recoverable encrypted drafts and decision provenance, with session undo/redo and immutable input identities/hashes.
+Healthy storage permits ≤1 second crash loss while dirty; explicit save/completion requires durable flush.
+Persistence failures visibly invalidate the guarantee.</li>
+<li>Opening/editing a result never automatically stages, commits, pushes, or continues the parent operation.
+Failed save/hook execution remains failed/unresolved.</li>
+<li>Expose progress/state and cancellation for long work; reject stale results after input/view changes.
+A mutation crossing an atomic boundary must finish or roll back that step before acknowledging cancellation.</li>
+<li>Cancellation preserves inputs and existing repository state or reports precisely which atomic steps completed and their recovery path.
+Distinguish editor undo, crash recovery, reflog recovery, and irreversible remote effects.</li>
+</ul>
+</section>
+
+<section id="security">
+<h2>Trust &amp; privacy</h2>
+<ul>
+<li>Untrusted repositories remain inspectable without executing repository-provided hooks, LSP/build discovery, plugins, or config-driven commands.
+Execution requires explicit revocable trust identifying repository and scope; grants cannot silently expand to other worktrees/repos or changed executable config.</li>
+<li>No silent content upload, telemetry, cloud analysis, package installation, or code execution merely to render a comparison.
+Network use is explicit for remotes or approved retrieval; local inspection/comparison/merging works offline.</li>
+<li>Prevent secret/content leakage through logs, errors, clipboard side effects, indexes, caches, and recovery records.
+Sensitive durable drafts use protected per-user storage, encryption with protected keys, and retention/deletion controls.</li>
+<li>Credentials/signing use configured system/Git mechanisms, not plaintext application token stores.
+Isolate trust contexts and validate traversal/symlinks, rendered content, and plugin/server boundaries.</li>
+<li>Do not auto-load repository fonts.
+The selected shaper's untrusted-font warning must be respected; initially only bundled fonts are accepted.</li>
+</ul>
+</section>
+
+<section id="integrations">
+<h2>External invocation</h2>
+<ul>
+<li>Provide standalone file diff/merge and Git difftool/mergetool contracts: explicit paths/labels, writable result, blocking/wait behavior, and documented exit statuses.</li>
+<li>Success requires durable output and explicitly completed resolution; closing a window is not success.</li>
+<li>Handle spaces, quotes, non-ASCII, leading dashes, and native separators without shell interpolation vulnerabilities.</li>
+<li>Git registration is documented or explicitly opt-in; launch never modifies Git configuration.</li>
+<li>jj integration is optional only where a small adapter reuses contracts and faithfully preserves its operation/conflict representation, including explicit handling or rejection of multi-sided conflicts.</li>
+</ul>
+</section>
+
+<section id="architecture">
+<h2>Implementation boundaries</h2>
+<p>Zig-owned application/UI/editor and structural diff/merge algorithms; native rendering, no browser/webview.
+Foreign dependencies require justified, licensed, approved integration.
+Candidate investigation does not establish final adoption or compliance.</p>
+<div class="table"><table>
+<thead><tr><th>Boundary</th><th>Selected direction</th></tr></thead>
+<tbody>
+<tr><td>Platform/rendering</td><td><a href="https://github.com/allyourcodebase/SDL">SDL3</a> GPU; build-time backend-specific shaders; no application-managed runtime shader compiler.</td></tr>
+<tr><td>Text</td><td><a href="https://github.com/JimmyLefevre/kb">kb</a> shaping/segmentation, <a href="https://freetype.org/">FreeType</a> rasterization; Zig owns layout/editing and byte provenance.</td></tr>
+<tr><td>Accessibility</td><td>Bounded Zig semantic model with replaceable <a href="https://github.com/AccessKit/accesskit-c">AccessKit</a> backend first.</td></tr>
+<tr><td>Git</td><td><a href="https://github.com/allyourcodebase/libgit2">libgit2</a> first library candidate; installed Git compatibility fallback.</td></tr>
+<tr><td>Structure</td><td>Zig algorithms over approved <a href="https://tree-sitter.github.io/tree-sitter/">Tree-sitter</a> runtime and pinned grammars; structured source-range/provenance output.</td></tr>
+</tbody>
+</table></div>
+<ul>
+<li>Immediate UI descriptions use fixed frame scratch; stable IDs, focus, and editor state are retained.
+Bound traversal/draw work, sleep while idle, update accessibility incrementally.</li>
+<li>Compare bounded piece tree and rope for edit/undo, line/offset lookup, snapshot cost, byte preservation, and exhaustion before selecting text storage.</li>
+<li>Structural engines/parsers execute in lazy bounded worker processes.
+Shared-memory-first transport uses bounded versioned control messages, read-only input snapshots, separate result buffers, cancellation, and stale-result rejection.</li>
+<li>Snapshots are immutable generation-tagged leased slots.
+Recycle only after all readers release or worker death is confirmed; shared memory respects trust and sensitive-data boundaries.</li>
+<li>Reuse compatible permissive implementation source and documented algorithms with provenance.
+GPL reference engines serve differential comparison, not copied/translated MIT implementation code.</li>
+</ul>
+<p>kb is not paragraph layout, IME, rasterization, font discovery, or accessibility.
+Its unsupported explicit bidi controls remain an acceptance gap.
+Library allocator hooks alone do not establish safe bounded operation.</p>
+</section>
+
+<section id="performance">
+<h2>Allocation &amp; performance</h2>
+<div class="table"><table>
+<thead><tr><th>Gate</th><th>Binding requirement</th></tr></thead>
+<tbody>
+<tr id="startup"><td>Startup</td><td>Median process-start → first usable GUI ≤1.1× minimal ReleaseSafe process on the same machine/OS for each comparable cold/warm class.
+Baseline signals immediate readiness; app has presented readable defaults, active input, and Ctrl+P.
+Splash/prewarming and false early-ready signals do not qualify.</td></tr>
+<tr id="latency"><td>Interaction</td><td>Typing, navigation, and action search separately: input-to-visible p95 ≤16.7 ms, p99 ≤50 ms on reference hardware under normal-tier background load.
+No blocking on scans, engines, network, syntax, indexing, or LSP.</td></tr>
+<tr id="workload"><td>Normal tier</td><td>Synthetic only: 100k tracked files, 1M commits, 100k-line active file, 1k-file merge.
+Fix byte sizes, line distributions, Unicode, edits, conflict density, and concurrency before measurement.</td></tr>
+<tr id="pools"><td>Zig-owned allocation</td><td>Allocate backing storage once per process before service; session/job/frame lifetimes borrow/recycle fixed pools without backing growth.
+Lazy workers initialize their own pools before service.</td></tr>
+<tr id="limits"><td>Capacity</td><td>Bound queues, caches, undo, snapshots, parallelism, workers, LSP lifetime, and GPU resources.
+Pool exhaustion is a recoverable visible resource-limit outcome preserving work, never silent truncation.
+Numeric caps require measurement and owner approval before architecture acceptance.</td></tr>
+<tr id="regressions"><td>Regression</td><td>Binding-budget failure or statistically supported &gt;5% worsening in designated latency/memory metrics blocks release without explicit approval.</td></tr>
+</tbody>
+</table></div>
+<ul>
+<li>Acceptance measures the shipped ReleaseSafe artifact with always-active programmer-invariant checks.
+App pools/device/pipeline initialization required for usability count toward startup, including driver work.</li>
+<li>Hyperfine orchestrates repeated runs and raw export; actual endpoint timestamps are authoritative, excluding wrapper/cleanup time.
+Interaction requires input/presentation traces, not handler timing.</li>
+<li>Publish raw samples, median/tail latency, median-ratio confidence intervals, and uncertainty using declared sampling/stopping procedures.
+Inconclusive results do not pass; changing the baseline to a minimal GUI is not permitted.</li>
+<li>Report allocation count/bytes, retained capacity, app/engine/LSP and simultaneous aggregate memory, shared mappings, GPU resources, and reserve versus physically touched memory.
+Attribute foreign allocations; avoid double-counting shared pages.</li>
+<li>Initial feasibility uses this machine's native Win32 and WSL GUI; WSLg/headless results do not replace native Linux/macOS acceptance.
+No reboots; cold trials require an approved verified cache-reset API, otherwise cold compliance remains unverified.
+Cache scope includes guest/host, fonts, and drivers.</li>
+<li>Comparisons require matching hardware, fixtures, artifact/build inputs, and methodology.
+Record OS/display, power/load/cache state, hashes/seeds, run order, measurement overhead, and uncertainty.
+Larger/adversarial workloads must degrade visibly and preserve decisions.</li>
+</ul>
+</section>
+
+<section id="delivery">
+<h2>Build, CI &amp; delivery</h2>
+<ul>
+<li>mise owns the development-tool registry and exact pinned versions.
+Minimal mise tasks delegate to authoritative Zig build steps for compilation/tests/benchmarks/packaging; foreign build tools sit behind Zig adapters.
+Local and CI use the same registry/steps.</li>
+<li>Track latest stable through reviewed upgrade PRs and committed tool/dependency revisions, integrity metadata, and artifact hashes.
+Acceptance builds never resolve floating latest versions.
+A compatible complete toolchain graph must be demonstrated; byte-identical reproducibility is not assumed.</li>
+<li>GitHub Actions PR gates cover formatting/static checks, unit/property tests, focused integration, and platform launch/input.
+Nightly gates cover full large-tier/fault matrices; release requires complete acceptance and controlled-hardware benchmark evidence.</li>
+<li>Untrusted contributions cannot reach release secrets or personal-machine runners.
+Authoritative benchmarks use explicitly approved local jobs, no persistent runner installation; hosted timing alone is not authoritative.</li>
+<li>Portable-first packages: Windows archive, Linux relocatable bundle, macOS app bundle.
+Sensitive state remains protected per-user, not plaintext beside executables.</li>
+<li>Manual download/replacement only initially, with documented state migration/failure/rollback behavior; no background update checks.</li>
+<li>Publish versioned artifacts, checksums, verifiable provenance, dependency/font notices, and explicit unsigned-package labels.
+OS signing is deferred.</li>
+</ul>
+<p>Coding discipline is maintained in <a href="src/AGENTS.md">src/AGENTS.md</a>, not duplicated here.
+Conditional dependency, benchmark, and delivery procedures live in <a href=".agents/skills/warkocz-dependencies/SKILL.md">local</a> <a href=".agents/skills/warkocz-benchmark/SKILL.md">agent</a> <a href=".agents/skills/warkocz-delivery/SKILL.md">skills</a>.</p>
+</section>
+
+<section id="acceptance">
+<h2>Acceptance evidence</h2>
+<p>Each contract section requires implementation and verification evidence tied to source/artifact/tool/fixture versions.
+Unverified requirements remain incomplete; screenshots alone do not establish correctness or responsiveness.</p>
+<div class="table"><table>
+<thead><tr><th>Contract</th><th>Required evidence</th></tr></thead>
+<tbody>
+<tr><td><a href="#vcs">Git</a>, <a href="#integrations">invocation</a></td><td>Isolated synthetic daily/advanced workflows; hooks, encryption filters, LFS, signing, conditional config, credentials, worktrees/submodules; partial staging; adversarial paths; correct wait/save/cancel/exit behavior.</td></tr>
+<tr><td><a href="#merge">Merge</a>, <a href="#files">fidelity</a></td><td>Unchanged, one-sided, identical-sided, conflicting, moved/edited, reorder/add/delete and multiple-base cases; byte round trips; binary/path/metadata conflicts; automatic provenance after crash/restart.</td></tr>
+<tr><td><a href="#semantics">Language</a>, <a href="#interface">UI</a></td><td>Multi-file unsaved LSP behavior and stale replies; declared language capabilities/fallbacks; action-registry coverage; owner review of Nugu dark/light, JetBrains Mono/icon fallback, workflow-based type hierarchy, minimal chrome and delightful feedback; IME, mixed DPI, zoom, ligatures, accessibility, reduced motion and non-color cues.</td></tr>
+<tr><td><a href="#recovery">Recovery</a>, <a href="#security">trust</a>, <a href="#architecture">boundaries</a></td><td>Seeded deterministic core simulation of clock/scheduling/filesystem/process/IPC faults; crash/save/cancel/OOM/stale-generation/lease races; revocation, offline operation, secret-safe storage, concurrency and graphics failure.
+Real native/Git integration remains independently required.</td></tr>
+<tr><td><a href="#performance">Resources</a></td><td>Startup/input/frame traces and raw statistics; post-init backing-allocation traps, pool/leak audits, long lines, undo/cache/snapshot pressure, late accessibility activation, GPU stress and worker churn.</td></tr>
+<tr><td><a href="#scope">Platforms</a>, <a href="#delivery">delivery</a></td><td>Native packaged execution on required OS/display combinations without developer runtime; delegated build/CI steps; tool/dependency locks, shader artifacts, provenance/notices, manual replacement and protected-state behavior.</td></tr>
+</tbody>
+</table></div>
+<p>Correctness combines Git differential compatibility, byte-preservation properties, reviewed structural expected results, fault injection, and native GUI integration.
+Pinned original structural engines provide confidence baselines; divergences are investigated, but agreement is not proof of correctness.
+Tests retain reproducible seeds/traces; risky mutations never use personal repositories.</p>
+</section>
+
+<section id="open">
+<h2>Unresolved implementation gates</h2>
+<ul>
+<li>Final compatible compiler/dependency revisions and license notices; candidate stack is not yet adopted or validated.</li>
+<li>Piece tree versus rope; paragraph layout, bidi controls, font coverage, IME, accessible virtualized text and glyph-cache behavior.</li>
+<li>Structural matching/composition rules, source provenance, reference fixture corpus, and per-language capability declarations.</li>
+<li>libgit2 safeguard equivalence and operation-specific fallback detection.</li>
+<li>Numeric memory/pool/queue/undo/worker/LSP/GPU caps, graphics minimums, Linux ABI floor, and exact benchmark workload/statistical protocol.</li>
+<li>Verified cache-reset API and WSL GUI availability; unavailable cold evidence is not a waiver of the startup gate.</li>
+<li>Default keymap, exact typography scale and Nugu semantic mappings, state migrations/rollback, release-provenance mechanism, later OS signing.</li>
+</ul>
+<p>Primary risks: usable GUI within 10% of a minimal process; full advanced Git plus editor-quality structural merging under strict resource discipline.
+Incremental delivery is allowed; a bootstrap or partial client does not satisfy this contract.</p>
+</section>
+</main>
+</body>
+</html>
