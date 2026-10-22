@@ -470,34 +470,14 @@ const RecordWorker = struct {
     fn run_prepare(self: *RecordWorker, version: u64) void {
         const record_request = self.request();
         const result = record.collect(self.io, self.executable[0..self.executable_len], self.repository[0..self.repository_len], record_request, self.buffers());
-        var target_oid: ?[]const u8 = null;
-        var target_failure: ?anyerror = null;
-        if (result) |collected| {
-            var branch_ref_storage: [record_path_capacity + "refs/heads/".len]u8 = undefined;
-            const target_ref: ?[]const u8 = switch (record_request) {
-                .branch_create => |value| value.start_point,
-                .branch_rename => |value| std.fmt.bufPrint(&branch_ref_storage, "refs/heads/{s}", .{value.old}) catch null,
-                .branch_delete => |value| std.fmt.bufPrint(&branch_ref_storage, "refs/heads/{s}", .{value.target}) catch null,
-                else => null,
-            };
-            if (target_ref) |ref| target_oid = record.resolve_start_point(self.io, collected.executable, collected.repository, ref, &self.command, &self.environment, self.config_sources) catch |err| target_lookup: {
-                target_failure = err;
-                break :target_lookup null;
-            };
-        } else |_| {}
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         self.running = false;
         if (version != self.version or self.stopping) return;
         if (result) |collected| {
-            if (target_failure) |err| {
-                self.failure = err;
-                self.state = .failed;
-                return;
-            }
-            if (target_oid) |oid| {
-                self.target_oid_len = @min(oid.len, self.target_oid.len);
-                @memcpy(self.target_oid[0..self.target_oid_len], oid[0..self.target_oid_len]);
+            if (collected.branch_target) |target| {
+                self.target_oid_len = target.oid().len;
+                @memcpy(self.target_oid[0..self.target_oid_len], target.oid());
             }
             self.collected = collected;
             self.token = record.Token.init(collected.preflight);

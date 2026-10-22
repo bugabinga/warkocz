@@ -29,8 +29,21 @@ pub const Buffers = struct {
     canonical_common_dir: []u8,
 };
 
+/// Fixed owned commit identity captured with branch operation evidence.
+pub const BranchTarget = struct {
+    bytes: [64]u8 = undefined,
+    len: u8 = 0,
+
+    pub fn oid(self: *const BranchTarget) []const u8 {
+        std.debug.assert(self.len == 40 or self.len == 64);
+        return self.bytes[0..self.len];
+    }
+};
+
 pub const Collected = struct {
     preflight: Preflight,
+    /// Present for branch creation, rename, and deletion; never borrows scratch.
+    branch_target: ?BranchTarget = null,
     remote_summary: RemoteSummary = .{},
     repository: []const u8,
     executable: []const u8,
@@ -170,7 +183,8 @@ pub fn collect(io: std.Io, absolute_git: []const u8, absolute_repository: []cons
     const operation_state = try operation_fingerprint(io, git_dir, buffers.command, buffers.file);
     const executable_config = try config_fingerprint(io, git, repository, buffers.command, buffers.environment, buffers.file, buffers.config_sources);
     var remote_summary: RemoteSummary = .{};
-    const target = try target_fingerprint(io, git, repository, worktree, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources, &remote_summary);
+    var branch_target: ?BranchTarget = null;
+    const target = try target_fingerprint(io, git, repository, worktree, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources, &remote_summary, &branch_target);
     const attributes = try attributes_fingerprint(io, git, repository, git_dir, worktree, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources);
     const hooks = try hooks_fingerprint(io, git, repository, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources);
     const executable = try executable_fingerprint(io, git, buffers.file);
@@ -188,13 +202,43 @@ pub fn collect(io: std.Io, absolute_git: []const u8, absolute_repository: []cons
         .attributes = attributes,
         .hooks = hooks,
         .operation = std.meta.activeTag(request),
-    }, .remote_summary = remote_summary, .repository = repository, .executable = git, .git_dir = git_dir, .worktree = worktree, .common_dir = common_dir };
+    }, .branch_target = branch_target, .remote_summary = remote_summary, .repository = repository, .executable = git, .git_dir = git_dir, .worktree = worktree, .common_dir = common_dir };
 }
 
 /// Produces literal installed-Git argv for one whole-file operation.
 /// `--literal-pathspecs` is global because `--` does not disable Git path magic.
 pub fn argv(request: Request, git_exe: []const u8, repository_path: []const u8, destination: [][]const u8) Error![]const []const u8 {
     return argv_resolved(request, git_exe, repository_path, null, destination);
+}
+
+test "branch-create argv keeps captured OID when symbolic start point later moves" {
+    var symbolic = [_]u8{ 'r', 'e', 'f', 's', '/', 't', 'a', 'g', 's', '/', 'v', '1' };
+    const request: Request = .{ .branch_create = .{ .name = "created", .start_point = &symbolic } };
+    const captured = "0123456789012345678901234567890123456789";
+    const git_exe = if (builtin.os.tag == .windows) "C:/git.exe" else "/git";
+    const repository = if (builtin.os.tag == .windows) "C:/repo" else "/repo";
+    var destination: [9][]const u8 = undefined;
+    const command = try argv_resolved(request, git_exe, repository, captured, &destination);
+    @memset(&symbolic, 'x');
+    try std.testing.expectEqual(@as(usize, 8), command.len);
+    try std.testing.expectEqualStrings(captured, command[7]);
+    try std.testing.expect(!std.mem.eql(u8, command[7], request.branch_create.start_point));
+}
+
+test "branch target owns validated SHA1 and SHA256 bytes" {
+    var scratch: [65]u8 = @splat('a');
+    const expected: [64]u8 = @splat('a');
+    for ([_]usize{ 40, 64 }) |length| {
+        @memset(&scratch, 'a');
+        const captured = try capture_branch_target(scratch[0..length]);
+        @memset(&scratch, 'b');
+        try std.testing.expectEqualStrings(expected[0..length], captured.oid());
+    }
+    try std.testing.expectError(error.InvalidGitOutput, capture_branch_target(scratch[0..39]));
+    try std.testing.expectError(error.InvalidGitOutput, capture_branch_target(&scratch));
+    scratch[0] = 'g';
+    try std.testing.expectError(error.InvalidGitOutput, capture_branch_target(scratch[0..40]));
+    try std.testing.expectError(error.InvalidGitOutput, capture_branch_target(scratch[0..64]));
 }
 
 fn argv_resolved(request: Request, git_exe: []const u8, repository_path: []const u8, resolved_start_point: ?[]const u8, destination: [][]const u8) Error![]const []const u8 {
@@ -349,8 +393,8 @@ fn execute_with_lock(io: std.Io, lock_file: std.Io.File, preflight: Preflight, i
     const fresh = try collect(io, initial.executable, initial.repository, request, buffers);
     if (!same_preflight(preflight, fresh.preflight) or !same_preflight(initial.preflight, fresh.preflight)) return error.StalePreflight;
     var args: [9][]const u8 = undefined;
-    const resolved_start_point = if (request == .branch_create) try resolve_start_point(io, fresh.executable, fresh.repository, request.branch_create.start_point, buffers.command, buffers.environment, buffers.config_sources) else null;
-    const command = try argv_resolved(request, fresh.executable, fresh.repository, resolved_start_point, &args);
+    const captured_start_point: ?BranchTarget = if (request == .branch_create) fresh.branch_target orelse return error.ScopeChanged else null;
+    const command = try argv_resolved(request, fresh.executable, fresh.repository, if (captured_start_point) |*value| value.oid() else null, &args);
     if (stdout_limit == 0 or stderr_limit == 0) return error.OutputLimitExceeded;
     var environment_allocator = std.heap.FixedBufferAllocator.init(buffers.environment);
     var environment = try inherited_environment(environment_allocator.allocator());
@@ -524,10 +568,11 @@ fn path_fingerprint(io: std.Io, parent: []const u8, leaf: []const u8, path_scrat
 
 /// Binds stage to exact regular-file bytes, or explicit absence for a deletion.
 /// Unstage binds the selected index entry; whole-index identity remains separately bound.
-fn target_fingerprint(io: std.Io, git: []const u8, repository: []const u8, worktree: []const u8, request: Request, path_scratch: []u8, environment: []u8, file_scratch: []u8, sources: ConfigSources, remote_summary: *RemoteSummary) Error!Fingerprint {
+fn target_fingerprint(io: std.Io, git: []const u8, repository: []const u8, worktree: []const u8, request: Request, path_scratch: []u8, environment: []u8, file_scratch: []u8, sources: ConfigSources, remote_summary: *RemoteSummary, branch_target: *?BranchTarget) Error!Fingerprint {
+    std.debug.assert(branch_target.* == null);
     switch (request) {
         .worktree_status => return trust.fingerprint("worktree status target\x00"),
-        .branch_create, .branch_rename, .branch_delete => return branch_fingerprint(io, git, repository, request, path_scratch, environment, sources),
+        .branch_create, .branch_rename, .branch_delete => return branch_fingerprint(io, git, repository, request, path_scratch, environment, sources, branch_target),
         .fetch, .push => return remote_fingerprint(io, git, repository, request, path_scratch, environment, sources, remote_summary),
         .commit => return trust.fingerprint("commit target: staged index\x00"),
         .unstage => |value| {
@@ -555,6 +600,15 @@ fn target_fingerprint(io: std.Io, git: []const u8, repository: []const u8, workt
     }
 }
 
+fn capture_branch_target(oid: []const u8) Error!BranchTarget {
+    if (oid.len != 40 and oid.len != 64) return error.InvalidGitOutput;
+    for (oid) |byte| if (!std.ascii.isHex(byte)) return error.InvalidGitOutput;
+    var result = BranchTarget{ .len = @intCast(oid.len) };
+    @memcpy(result.bytes[0..result.len], oid);
+    std.debug.assert(std.mem.eql(u8, result.oid(), oid));
+    return result;
+}
+
 pub fn resolve_start_point(io: std.Io, git: []const u8, repository: []const u8, start_point: []const u8, scratch: []u8, environment: []u8, sources: ConfigSources) Error![]const u8 {
     var expression: [4096]u8 = undefined;
     if (start_point.len + "^{commit}".len > expression.len) return error.InvalidStartPoint;
@@ -570,7 +624,7 @@ pub fn resolve_start_point(io: std.Io, git: []const u8, repository: []const u8, 
     return oid;
 }
 
-fn branch_fingerprint(io: std.Io, git: []const u8, repository: []const u8, request: Request, scratch: []u8, environment: []u8, sources: ConfigSources) Error!Fingerprint {
+fn branch_fingerprint(io: std.Io, git: []const u8, repository: []const u8, request: Request, scratch: []u8, environment: []u8, sources: ConfigSources, branch_target: *?BranchTarget) Error!Fingerprint {
     var inventory: Run = undefined;
     var destination: ?[]const u8 = null;
     var source: ?[]const u8 = null;
@@ -587,6 +641,12 @@ fn branch_fingerprint(io: std.Io, git: []const u8, repository: []const u8, reque
     if (source) |name| try check_branch_name(io, git, repository, name, scratch, environment, sources);
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
     hash.update("refs-inventory-and-worktrees\x00");
+    if (request == .branch_create) {
+        const oid = try resolve_start_point(io, git, repository, request.branch_create.start_point, scratch, environment, sources);
+        branch_target.* = try capture_branch_target(oid);
+        hash.update("branch-create-start-point\x00");
+        hash.update(branch_target.*.?.oid());
+    }
     if (source) |name| {
         const worktree_command = [_][]const u8{ git, "-C", repository, "--no-pager", "worktree", "list", "--porcelain", "-z" };
         const worktrees = try run(io, &worktree_command, scratch, environment, sources);
@@ -613,6 +673,7 @@ fn branch_fingerprint(io: std.Io, git: []const u8, repository: []const u8, reque
         if (source_ref) |wanted| {
             if (is_branch_ref(ref, wanted)) {
                 found_source = true;
+                branch_target.* = try capture_branch_target(std.mem.trimEnd(u8, record[separator + 1 ..], "\r"));
                 hash.update(record);
             }
         }
@@ -1412,6 +1473,50 @@ test "installed Git branch mutations create rename safe-delete and reject stale 
     try test_git(io, git, fixture, &.{ "commit", "--allow-empty", "-m", "advance" });
     try test_git(io, git, fixture, &.{ "update-ref", "refs/heads/stale", "HEAD^" });
     try std.testing.expectError(error.StalePreflight, execute_revalidated(io, &stale_store, &stale_token, stale, stale_request, stale_buffers.value(), stale_buffers.workspace, 4096, 4096, test_timeout()));
+}
+
+test "installed Git branch creation rejects moved tags and remote-tracking refs" {
+    if (comptime builtin.os.tag != .windows) return;
+    if (!test_git_enabled()) return;
+    const git = try test_git_executable();
+    defer std.testing.allocator.free(git);
+    const io = std.testing.io;
+    var fixture_memory: ["C:/Users/okr/AppData/Local/Temp/warkocz-native-e2e".len + 1 + 16]u8 = undefined;
+    const fixture = try test_fixture(io, &fixture_memory);
+    defer std.Io.Dir.cwd().deleteTree(io, fixture) catch {};
+    try test_git(io, git, fixture, &.{ "init", "--initial-branch=main" });
+    try test_git(io, git, fixture, &.{ "config", "user.email", "fixture@example.invalid" });
+    try test_git(io, git, fixture, &.{ "config", "user.name", "Fixture" });
+    try test_write(io, fixture, "base.txt", "base\n");
+    try test_git(io, git, fixture, &.{ "add", "--", "base.txt" });
+    try test_git(io, git, fixture, &.{ "commit", "-m", "base" });
+    try test_write(io, fixture, "next.txt", "next\n");
+    try test_git(io, git, fixture, &.{ "add", "--", "next.txt" });
+    try test_git(io, git, fixture, &.{ "commit", "-m", "next" });
+    try test_git(io, git, fixture, &.{ "tag", "moving-tag", "HEAD^" });
+    try test_git(io, git, fixture, &.{ "update-ref", "refs/remotes/origin/moving", "HEAD^" });
+    inline for (.{ .{ "moving-tag", "from-tag", "refs/tags/moving-tag" }, .{ "origin/moving", "from-remote", "refs/remotes/origin/moving" } }) |case| {
+        var buffers = try TestBuffers.init(io, fixture);
+        defer buffers.deinit();
+        const request: Request = .{ .branch_create = .{ .name = case.@"1", .start_point = case.@"0" } };
+        const reviewed = try collect(io, git, fixture, request, buffers.value());
+        try std.testing.expect(reviewed.branch_target != null);
+        var grants: [1]trust.Grant = undefined;
+        var store = trust.Store.init(&grants);
+        try store.grant(.{ .repository = reviewed.preflight.repository, .config = reviewed.preflight.executable_config, .scope = .branch_create });
+        var token = Token.init(reviewed.preflight);
+        try test_git(io, git, fixture, &.{ "update-ref", case.@"2", "HEAD" });
+        try std.testing.expectError(error.StalePreflight, execute_revalidated(io, &store, &token, reviewed, request, buffers.value(), buffers.workspace, 4096, 4096, test_timeout()));
+        try test_git_expect_failure(io, git, fixture, &.{ "show-ref", "--verify", std.fmt.comptimePrint("refs/heads/{s}", .{case.@"1"}) });
+        const renewed = try collect(io, git, fixture, request, buffers.value());
+        try std.testing.expect(!std.mem.eql(u8, reviewed.branch_target.?.oid(), renewed.branch_target.?.oid()));
+        var renewed_grants: [1]trust.Grant = undefined;
+        var renewed_store = trust.Store.init(&renewed_grants);
+        try renewed_store.grant(.{ .repository = renewed.preflight.repository, .config = renewed.preflight.executable_config, .scope = .branch_create });
+        var renewed_token = Token.init(renewed.preflight);
+        try std.testing.expect((try execute_revalidated(io, &renewed_store, &renewed_token, renewed, request, buffers.value(), buffers.workspace, 4096, 4096, test_timeout())).succeeded);
+        try test_expect_output(io, git, fixture, &.{ "rev-parse", std.fmt.comptimePrint("refs/heads/{s}", .{case.@"1"}) }, renewed.branch_target.?.oid());
+    }
 }
 
 test "configured nonorigin remote fetches and pushes only after scoped review" {
