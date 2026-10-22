@@ -1233,7 +1233,9 @@ fn open_recovery_session(io: std.Io, path: []const u8, output_path: []const u8, 
     };
     var opened = try open_session(io, request, storage);
     try recovery.restore_into(&opened.active, decoded);
+    index_lines(&opened.lines[1], opened.active.result());
     std.debug.assert(opened.active.current_state().unresolved and !opened.active.current_state().reviewed);
+    std.debug.assert(opened.lines[1].count > 0);
     return opened;
 }
 
@@ -1831,10 +1833,11 @@ fn replace_editor_selection(replacement: []const u8, model: *Model, current: *Op
     state.cursor = range.start + replacement.len;
     state.anchor = state.cursor;
     model.editor = state;
+    index_lines(&current.lines[1], current.active.result());
+    model.scroll[1].line = @min(model.scroll[1].line, current.lines[1].count - 1);
     scroll_to_editor(model, current);
     model.durable_generation = null;
     model.durable_receipt = null;
-    index_lines(&current.lines[1], current.active.result());
     model.status = "EDITED ASCII RESULT | unsaved | Save receipt invalidated";
     request_auto_recovery(model, current);
     sync_lsp_result(model, current);
@@ -2477,12 +2480,8 @@ fn request_lsp_action(model: *Model, current: *Opened, capability: @import("../l
     };
     const source = current.active.result();
     const range = state.replacement_range(source);
-    const line = line_for_offset(current.lines[1], range.start);
-    const line_start = current.lines[1].offsets[line];
-    const byte_column = editor.column_for_offset(source, line_start, range.start);
-    const character = utf16_column(source[line_start..range.start]);
-    std.debug.assert(byte_column <= range.start - line_start);
-    current.lsp.?.request(capability, .{ .line = @intCast(line), .character = @intCast(character) }) catch |err| {
+    const position = lsp_position(source, current.lines[1], range.start);
+    current.lsp.?.request(capability, position) catch |err| {
         model.status = @errorName(err);
         return;
     };
@@ -2493,6 +2492,17 @@ fn request_lsp_action(model: *Model, current: *Opened, capability: @import("../l
         .references => "LSP REFERENCES REQUESTED | current result caret",
         .diagnostics => unreachable,
     };
+}
+
+/// LSP positions count UTF-16 code units, unlike editor display columns with expanded tabs.
+fn lsp_position(source: []const u8, lines: Lines, offset: usize) @import("../lsp/protocol.zig").Position {
+    std.debug.assert(offset <= source.len);
+    const line = line_for_offset(lines, offset);
+    const line_start = lines.offsets[line];
+    std.debug.assert(line_start <= offset and offset <= source.len);
+    const character = utf16_column(source[line_start..offset]);
+    std.debug.assert(character <= offset - line_start);
+    return .{ .line = @intCast(line), .character = @intCast(character) };
 }
 
 fn utf16_column(prefix: []const u8) usize {
@@ -2652,20 +2662,20 @@ fn session_status(active: *const session.Session) []const u8 {
     const state = active.current_state();
     std.debug.assert(state.written == active.result().len);
     if (active.degradation()) |reason| return switch (reason) {
-        .resource_limited => "RESOURCE-LIMITED BYTE REVIEW | no structural or automatic merge claim | unresolved",
-        .ambiguous_alignment => "AMBIGUOUS BYTE REVIEW | no structural or automatic merge claim | unresolved",
-        .json_malformed => "JSON MALFORMED | exact byte review | unresolved",
-        .json_unsupported_root => "JSON ROOT UNSUPPORTED | exact byte review | unresolved",
-        .json_duplicate_key => "JSON DUPLICATE KEY | exact byte review | unresolved",
-        .json_member_set_changed => "JSON MEMBER SET CHANGED | exact byte review | unresolved",
-        .json_member_order_changed => "JSON MEMBER ORDER CHANGED | exact byte review | unresolved",
-        .json_ambiguous_formatting => "JSON FORMAT CHANGED | exact byte review | unresolved",
-        .zig_malformed_source => "ZIG MALFORMED | exact byte review | unresolved",
-        .zig_unsupported_declaration => "ZIG DECLARATION UNSUPPORTED | exact byte review | unresolved",
-        .zig_duplicate_name => "ZIG DUPLICATE NAME | exact byte review | unresolved",
-        .zig_declaration_set_changed => "ZIG DECLARATION SET CHANGED | exact byte review | unresolved",
-        .zig_declaration_order_changed => "ZIG DECLARATION ORDER CHANGED | exact byte review | unresolved",
-        .zig_ambiguous_shell => "ZIG SHELL AMBIGUOUS | exact byte review | unresolved",
+        .resource_limited => if (state.unresolved) "RESOURCE-LIMITED BYTE REVIEW | no structural or automatic merge claim | unresolved" else "RESOURCE-LIMITED BYTE REVIEW | no structural or automatic merge claim",
+        .ambiguous_alignment => if (state.unresolved) "AMBIGUOUS BYTE REVIEW | no structural or automatic merge claim | unresolved" else "AMBIGUOUS BYTE REVIEW | no structural or automatic merge claim",
+        .json_malformed => if (state.unresolved) "JSON MALFORMED | exact byte review | unresolved" else "JSON MALFORMED | exact byte review",
+        .json_unsupported_root => if (state.unresolved) "JSON ROOT UNSUPPORTED | exact byte review | unresolved" else "JSON ROOT UNSUPPORTED | exact byte review",
+        .json_duplicate_key => if (state.unresolved) "JSON DUPLICATE KEY | exact byte review | unresolved" else "JSON DUPLICATE KEY | exact byte review",
+        .json_member_set_changed => if (state.unresolved) "JSON MEMBER SET CHANGED | exact byte review | unresolved" else "JSON MEMBER SET CHANGED | exact byte review",
+        .json_member_order_changed => if (state.unresolved) "JSON MEMBER ORDER CHANGED | exact byte review | unresolved" else "JSON MEMBER ORDER CHANGED | exact byte review",
+        .json_ambiguous_formatting => if (state.unresolved) "JSON FORMAT CHANGED | exact byte review | unresolved" else "JSON FORMAT CHANGED | exact byte review",
+        .zig_malformed_source => if (state.unresolved) "ZIG MALFORMED | exact byte review | unresolved" else "ZIG MALFORMED | exact byte review",
+        .zig_unsupported_declaration => if (state.unresolved) "ZIG DECLARATION UNSUPPORTED | exact byte review | unresolved" else "ZIG DECLARATION UNSUPPORTED | exact byte review",
+        .zig_duplicate_name => if (state.unresolved) "ZIG DUPLICATE NAME | exact byte review | unresolved" else "ZIG DUPLICATE NAME | exact byte review",
+        .zig_declaration_set_changed => if (state.unresolved) "ZIG DECLARATION SET CHANGED | exact byte review | unresolved" else "ZIG DECLARATION SET CHANGED | exact byte review",
+        .zig_declaration_order_changed => if (state.unresolved) "ZIG DECLARATION ORDER CHANGED | exact byte review | unresolved" else "ZIG DECLARATION ORDER CHANGED | exact byte review",
+        .zig_ambiguous_shell => if (state.unresolved) "ZIG SHELL AMBIGUOUS | exact byte review | unresolved" else "ZIG SHELL AMBIGUOUS | exact byte review",
     };
     return if (state.unresolved) "UNRESOLVED | review required | in-memory only; no disk writes" else "PENDING UNSAVED | new file only; Save required before Complete";
 }
@@ -3846,6 +3856,10 @@ pub fn gpu_save_close_pending_completion_test() !void {
 /// recovery-picker result starts the DPAPI worker, and welcome's copied restore
 /// paths feed a distinct recovery LoadJob.  OS picker presentation remains manual.
 pub fn gpu_recovery_restore_e2e_test() !void {
+    for ([_][]const u8{ "lefT\r\n", "", "first\r\nsecond\nthird" }) |draft| try gpu_recovery_restore_scenario(draft);
+}
+
+fn gpu_recovery_restore_scenario(draft: []const u8) !void {
     if (comptime @import("builtin").os.tag != .windows) return;
     if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO)) return error.GraphicsUnavailable;
     defer sdl.SDL_Quit();
@@ -3886,13 +3900,13 @@ pub fn gpu_recovery_restore_e2e_test() !void {
     defer std.testing.allocator.free(backing);
     var allocator = std.heap.FixedBufferAllocator.init(backing);
     const request: invocation.Request = .{ .merge = .{ .base = base, .left = left, .right = right, .output = output, .base_label = null, .left_label = null, .right_label = null, .output_label = null, .wait = false } };
-    const encrypted = try recovery_export_scenario(io, window, recovery_path, request, &allocator);
+    const encrypted = try recovery_export_scenario(io, window, recovery_path, request, &allocator, draft);
     @memset(backing, 0);
     allocator.reset();
     const encrypted_before = try std.testing.allocator.dupe(u8, encrypted);
     defer std.testing.allocator.free(encrypted_before);
     std.testing.allocator.free(encrypted);
-    try recovery_restore_scenario(io, window, recovery_path, output, &allocator);
+    try recovery_restore_scenario(io, renderer, window, recovery_path, output, &allocator, draft);
     @memset(backing, 0);
     allocator.reset();
     try replace_native_file(io, cwd, left, "LEFT\r\n");
@@ -4106,7 +4120,7 @@ fn recovery_restore_discovered_scenario(io: std.Io, window: *sdl.SDL_Window, fix
     defer cleanup_native_file(cwd, io, output);
 }
 
-fn recovery_export_scenario(io: std.Io, window: *sdl.SDL_Window, recovery_path: []const u8, request: invocation.Request, allocator: *std.heap.FixedBufferAllocator) ![]u8 {
+fn recovery_export_scenario(io: std.Io, window: *sdl.SDL_Window, recovery_path: []const u8, request: invocation.Request, allocator: *std.heap.FixedBufferAllocator, draft: []const u8) ![]u8 {
     var job = try LoadJob.init(io, request, allocator.allocator());
     try job.start();
     defer job.deinit();
@@ -4115,8 +4129,8 @@ fn recovery_export_scenario(io: std.Io, window: *sdl.SDL_Window, recovery_path: 
     try opened.init_save(io);
     try opened.init_recovery(io);
     try opened.active.choose(opened.active.identity().generation, .left);
-    try opened.active.apply_edits(opened.active.identity().generation, &.{.{ .start = 3, .end = 4, .replacement = "T" }});
-    try std.testing.expectEqualStrings("lefT\r\n", opened.active.result());
+    try opened.active.apply_edits(opened.active.identity().generation, &.{.{ .start = 0, .end = opened.active.result().len, .replacement = draft }});
+    try std.testing.expectEqualStrings(draft, opened.active.result());
     var model = Model{ .mode = .merge, .status = "RECOVERY PICKER OPEN", .recovery_picker = .{ .io = io }, .window = window, .clipboard = opened.clipboard };
     @memcpy(model.recovery_picker.storage[0..recovery_path.len], recovery_path);
     model.recovery_picker.result = .{ .selected = model.recovery_picker.storage[0..recovery_path.len] };
@@ -4129,11 +4143,12 @@ fn recovery_export_scenario(io: std.Io, window: *sdl.SDL_Window, recovery_path: 
     const encrypted = try read_native_file(io, recovery_path, recovery.Controller.ciphertext_capacity);
     defer std.testing.allocator.free(encrypted);
     try std.testing.expect(encrypted.len > opened.active.result().len);
-    try std.testing.expect(std.mem.indexOf(u8, encrypted, opened.active.result()) == null);
+    try std.testing.expect(std.mem.indexOf(u8, encrypted, "left\r\n") == null);
+    if (draft.len > 0) try std.testing.expect(std.mem.indexOf(u8, encrypted, draft) == null);
     return try std.testing.allocator.dupe(u8, encrypted);
 }
 
-fn recovery_restore_scenario(io: std.Io, window: *sdl.SDL_Window, recovery_path: []const u8, output: []const u8, allocator: *std.heap.FixedBufferAllocator) !void {
+fn recovery_restore_scenario(io: std.Io, renderer: *sdl.SDL_Renderer, window: *sdl.SDL_Window, recovery_path: []const u8, output: []const u8, allocator: *std.heap.FixedBufferAllocator, draft: []const u8) !void {
     var launcher = Launcher.init(io, allocator.allocator());
     launcher.stage = .restore_output;
     @memcpy(launcher.recovery_path[0..recovery_path.len], recovery_path);
@@ -4149,9 +4164,13 @@ fn recovery_restore_scenario(io: std.Io, window: *sdl.SDL_Window, recovery_path:
     var opened = try wait_for_load_job(&job);
     defer opened.deinit();
     try opened.init_save(io);
-    try std.testing.expectEqualStrings("lefT\r\n", opened.active.result());
+    try std.testing.expectEqualStrings(draft, opened.active.result());
+    try std.testing.expectEqual(@as(usize, 1) + std.mem.count(u8, draft, "\n"), opened.lines[1].count);
     try std.testing.expect(opened.active.current_state().unresolved and !opened.active.current_state().reviewed);
-    var model = Model{ .mode = .merge, .status = "RECOVERY RESTORED", .clipboard = opened.clipboard };
+    var model = Model{ .mode = .merge, .status = session_status(&opened.active), .editor = editor.State.init(opened.active.result()), .clipboard = opened.clipboard };
+    try update_layout(renderer, window, &model);
+    try render(renderer, &model, &opened);
+    try std.testing.expect(std.mem.indexOf(u8, model.status, "UNRESOLVED") != null);
     try std.testing.expect(disabled_reason(action_index(.save), &model, &opened) != null);
     try std.testing.expect(disabled_reason(action_index(.complete), &model, &opened) != null);
     try opened.active.mark_resolved(opened.active.identity().generation);
@@ -4159,7 +4178,7 @@ fn recovery_restore_scenario(io: std.Io, window: *sdl.SDL_Window, recovery_path:
     apply_action(action_index(.save), &model, &opened);
     var redraw = false;
     try wait_for_gui_save(&model, &opened, &redraw);
-    try expect_native_file(io, output, "lefT\r\n");
+    try expect_native_file(io, output, draft);
     apply_action(action_index(.complete), &model, &opened);
     try wait_for_gui_completion(&model, &opened, &redraw);
     try std.testing.expect(model.completed);
@@ -4687,6 +4706,60 @@ test "native line index retains empty lines and trailing LF" {
     try std.testing.expectEqual(@as(u32, 0), lines.offsets[0]);
 }
 
+test "native editor replacement reindexes before scrolling shortened result" {
+    var newline_result: [100]u8 = undefined;
+    var ascii_replacement: [100]u8 = undefined;
+    @memset(&newline_result, '\n');
+    @memset(&ascii_replacement, 'x');
+    var result: [256]u8 = undefined;
+    var scratch: [256]u8 = undefined;
+    var history: [4096]u8 = undefined;
+    var records: [128]session.Record = undefined;
+    var offsets: [3][128]u32 = undefined;
+    var opened = Opened{
+        .active = try session.Session.init_two_way(&newline_result, "", .{ .result = &result, .scratch = &scratch, .history = &history, .records = &records }),
+        .labels = .{ .base = "none", .left = "left", .right = "right", .output = "output" },
+        .destination = "output",
+        .input_paths = .{ .base = null, .left = "left", .right = "right" },
+        .lines = undefined,
+        .save = undefined,
+    };
+    try opened.active.choose(opened.active.generation, .left);
+    for (&opened.lines, &offsets) |*lines, *region| lines.* = .{ .offsets = region };
+    index_lines(&opened.lines[0], opened.active.inputs.left);
+    index_lines(&opened.lines[1], opened.active.result());
+    index_lines(&opened.lines[2], opened.active.inputs.right);
+    var state = editor.State.init(opened.active.result()).?;
+    state.select_all(opened.active.result());
+    var model = Model{ .mode = .diff, .status = "test", .editor = state, .focus = 1 };
+    model.scroll[1].line = 100;
+    try replace_editor_selection(&ascii_replacement, &model, &opened);
+    try std.testing.expectEqual(@as(usize, 100), opened.active.result().len);
+    try std.testing.expectEqual(@as(usize, 1), opened.lines[1].count);
+    try std.testing.expectEqual(@as(usize, 0), model.scroll[1].line);
+    scroll_view(&model, &opened, 1, 0);
+    model.editor.?.select_all(opened.active.result());
+    try replace_editor_selection("x", &model, &opened);
+    try std.testing.expectEqualStrings("x", opened.active.result());
+    scroll_view(&model, &opened, 1, 0);
+    model.editor.?.select_all(opened.active.result());
+    try replace_editor_selection("", &model, &opened);
+    scroll_view(&model, &opened, 1, 0);
+    try std.testing.expectEqualStrings("", opened.active.result());
+    try std.testing.expectEqual(@as(usize, 0), model.scroll[1].line);
+}
+
+test "native LSP position ignores display width of tabs" {
+    const source = "\tfoo\n";
+    var offsets: [source.len + 1]u32 = undefined;
+    var lines = Lines{ .offsets = &offsets };
+    index_lines(&lines, source);
+    try std.testing.expectEqual(@as(u32, 1), lsp_position(source, lines, 1).character);
+    const position = lsp_position(source, lines, 4);
+    try std.testing.expectEqual(@as(u32, 0), position.line);
+    try std.testing.expectEqual(@as(u32, 4), position.character);
+}
+
 test "native palette matches aliases and never applies query letters" {
     var model = Model{ .mode = .welcome, .status = "test", .palette_open = true };
     append_query(&model, "publish");
@@ -4727,6 +4800,27 @@ test "native session status explicitly distinguishes unresolved review state" {
     try std.testing.expect(std.mem.indexOf(u8, session_status(&active), "review") != null);
     const result_role = if (active.current_state().unresolved) "RESULT | UNRESOLVED | REVIEW REQUIRED" else "RESULT | PENDING UNSAVED | REVIEW STATUS";
     try std.testing.expect(std.mem.indexOf(u8, result_role, "UNRESOLVED") != null);
+}
+
+test "native degradation status retains reason after explicit resolution" {
+    var result: [32]u8 = undefined;
+    var scratch: [32]u8 = undefined;
+    var history: [128]u8 = undefined;
+    var records: [4]session.Record = undefined;
+    var base_members: [2]json_merge.Member = undefined;
+    var left_members: [2]json_merge.Member = undefined;
+    var right_members: [2]json_merge.Member = undefined;
+    var base_keys: [16]u8 = undefined;
+    var left_keys: [16]u8 = undefined;
+    var right_keys: [16]u8 = undefined;
+    var scanner: [256]u8 = undefined;
+    var workspace = json_merge.Workspace{ .base = .{ .members = &base_members, .keys = &base_keys }, .left = .{ .members = &left_members, .keys = &left_keys }, .right = .{ .members = &right_members, .keys = &right_keys }, .scanner_memory = &scanner, .max_work = 0 };
+    var active = try session.Session.init(.{ .base = "{\"a\":1}", .left = "{\"a\":2}", .right = "{\"a\":3}" }, .{ .result = &result, .scratch = &scratch, .history = &history, .records = &records, .json_workspace = &workspace });
+    try std.testing.expect(std.mem.indexOf(u8, session_status(&active), "unresolved") != null);
+    try active.choose(active.identity().generation, .left);
+    const status = session_status(&active);
+    try std.testing.expect(std.mem.indexOf(u8, status, "RESOURCE-LIMITED") != null);
+    try std.testing.expect(std.mem.indexOf(u8, status, "unresolved") == null);
 }
 
 test "native real controls guard base, require visible help, choose, undo and scroll" {

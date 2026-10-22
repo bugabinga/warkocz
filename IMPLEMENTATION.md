@@ -130,7 +130,22 @@ Typography pins remain investigation-only and unapproved for adoption.
 - Corrected the encoder's extra slash without changing expected URIs; host-independent cases cover POSIX root, POSIX/Windows absolute paths, Unicode/reserved bytes, exact capacity, and undersized buffers.
 - New regression failed before the fix; all six protocol tests then passed in ReleaseSafe and Debug.
 - Repair-commit native LSP fixtures passed 4/4 steps with fifteen invocations; installed-Git verification passed 180/180 overlapping executions.
-- Fresh hosted checks on the URI repair remain required before merge.
+- URI repair hosted run `39800021937` passed Windows, Linux, and macOS before the subsequent review-crash repairs below.
+
+### Review-crash repairs
+
+Five automated review reports were verified against `e777cbe` before merge.
+Resolution now retains conflict/degradation provenance without false accessor assertions, with history-record consistency checked independently.
+Resolved degradation status retains the fallback reason without falsely labeling the result unresolved.
+Editor replacement rebuilds line offsets before caret scrolling and clamps the result view; LSP positions use UTF-16 units rather than tab-expanded display columns.
+Recovery rebuilds result line offsets before handoff to rendering.
+The encrypted GPU restore fixture covers the original CRLF draft, an empty draft, and changed multiline boundaries through restore, render, explicit resolution, Save, and Complete.
+
+- Untouched-conflict and malformed-JSON resolution regressions failed against the old accessors and passed after repair; malformed-Zig/resource-limited history cases and the original JSON-budget regression remain covered.
+- ReleaseSafe check/GPU graph passed 25/25 steps and 592 overlapping executions (183 core + 184 native + 225 GPU), plus executable contracts.
+- Debug test/GPU graph passed 23/23 steps with the same 592 overlapping executions and executable contracts.
+- Owner visual/OS-input acceptance remains unrun; injected rendering and status assertions are not visual approval.
+- Fresh hosted checks on these review repairs remain required before merge.
 
 ## Earlier verification
 

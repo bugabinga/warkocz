@@ -140,14 +140,20 @@ pub const Session = struct {
     }
 
     pub fn current_state(self: *const Session) State {
+        std.debug.assert(self.record_count > 0);
+        std.debug.assert(self.cursor < self.record_count);
         std.debug.assert(self.state.written <= self.storage.result.len);
-        std.debug.assert(self.state.unresolved or self.state.origin != .conflict);
+        const current = self.storage.records[self.cursor];
+        std.debug.assert(current.len == self.state.written);
+        std.debug.assert(current.origin == self.state.origin and current.reviewed == self.state.reviewed and current.unresolved == self.state.unresolved);
         return self.state;
     }
 
     pub fn degradation(self: *const Session) ?DegradedReason {
         std.debug.assert(self.record_count > 0);
-        std.debug.assert(self.degraded_reason == null or self.state.unresolved);
+        std.debug.assert(self.cursor < self.record_count);
+        const is_degraded = std.meta.eql(self.engine_used, Session.degraded_byte_review_engine);
+        std.debug.assert((self.degraded_reason != null) == is_degraded);
         return self.degraded_reason;
     }
 
@@ -566,6 +572,39 @@ test "JSON budget fallback retains exact bytes and unresolved session decisions"
     try std.testing.expect(!active.current_state().unresolved);
 }
 
+test "malformed JSON fallback retains degradation through resolved history" {
+    var result: [32]u8 = @splat(0xa5);
+    var scratch: [32]u8 = undefined;
+    var history: [128]u8 = undefined;
+    var records: [4]Record = undefined;
+    var base_members: [2]json_merge.Member = undefined;
+    var left_members: [2]json_merge.Member = undefined;
+    var right_members: [2]json_merge.Member = undefined;
+    var base_keys: [16]u8 = undefined;
+    var left_keys: [16]u8 = undefined;
+    var right_keys: [16]u8 = undefined;
+    var scanner: [256]u8 = undefined;
+    var workspace = json_merge.Workspace{ .base = .{ .members = &base_members, .keys = &base_keys }, .left = .{ .members = &left_members, .keys = &left_keys }, .right = .{ .members = &right_members, .keys = &right_keys }, .scanner_memory = &scanner };
+    var active = try Session.init(.{ .base = "{\"a\":1}x", .left = "{\"a\":2}x", .right = "{\"a\":3}x" }, .{ .result = &result, .scratch = &scratch, .history = &history, .records = &records, .json_workspace = &workspace });
+    try std.testing.expectEqual(Session.degraded_byte_review_engine, active.identity().engine);
+    try std.testing.expectEqual(DegradedReason.json_malformed, active.degradation().?);
+    try std.testing.expectEqual(State{ .origin = .conflict, .reviewed = false, .unresolved = true, .written = 8 }, active.current_state());
+    try std.testing.expectEqualStrings("{\"a\":1}x", active.result());
+    try active.choose(active.identity().generation, .left);
+    try std.testing.expectEqual(State{ .origin = .manual_left, .reviewed = false, .unresolved = false, .written = 8 }, active.current_state());
+    try std.testing.expectEqual(DegradedReason.json_malformed, active.degradation().?);
+    try std.testing.expectEqualStrings("{\"a\":2}x", active.result());
+    try active.undo(active.identity().generation);
+    try std.testing.expectEqualStrings("{\"a\":1}x", active.result());
+    try std.testing.expect(active.current_state().unresolved);
+    try active.redo(active.identity().generation);
+    try std.testing.expectEqualStrings("{\"a\":2}x", active.result());
+    try active.reset_original(active.identity().generation);
+    try std.testing.expectEqualStrings("{\"a\":1}x", active.result());
+    try std.testing.expect(active.current_state().unresolved);
+    try std.testing.expectEqual(DegradedReason.json_malformed, active.degradation().?);
+}
+
 test "multi-hunk merge retains exact change navigation provenance" {
     var result: [64]u8 = undefined;
     var scratch: [64]u8 = undefined;
@@ -609,7 +648,7 @@ test "Zig declaration session composes independent declarations and retains inpu
     try std.testing.expectEqual(hash_inputs(.{ .base = base, .left = left, .right = right }, .three_way), identity.inputs);
 }
 
-test "malformed Zig source falls back to unresolved exact bytes" {
+test "malformed Zig fallback retains degradation through resolved history" {
     var result: [64]u8 = undefined;
     var scratch: [64]u8 = undefined;
     var history: [128]u8 = undefined;
@@ -618,12 +657,26 @@ test "malformed Zig source falls back to unresolved exact bytes" {
     var names: [3][64]u8 = undefined;
     var parser: [8192]u8 = undefined;
     var workspace = zig_merge.Workspace{ .base = .{ .declarations = &declarations[0], .names = &names[0] }, .left = .{ .declarations = &declarations[1], .names = &names[1] }, .right = .{ .declarations = &declarations[2], .names = &names[2] }, .scratch_memory = &parser };
-    const original = "pub fn broken( {";
-    var active = try Session.init(.{ .base = original, .left = original, .right = original }, .{ .result = &result, .scratch = &scratch, .history = &history, .records = &records, .zig_workspace = &workspace });
+    const base = "pub fn broken( {";
+    const right = "pub fn different( {";
+    var active = try Session.init(.{ .base = base, .left = "const bad = ;", .right = right }, .{ .result = &result, .scratch = &scratch, .history = &history, .records = &records, .zig_workspace = &workspace });
     try std.testing.expectEqual(Session.degraded_byte_review_engine, active.identity().engine);
     try std.testing.expectEqual(DegradedReason.zig_malformed_source, active.degradation().?);
     try std.testing.expect(active.current_state().unresolved);
-    try std.testing.expectEqualStrings(original, active.result());
+    try std.testing.expectEqualStrings(base, active.result());
+    try active.choose(active.identity().generation, .right);
+    try std.testing.expectEqual(State{ .origin = .manual_right, .reviewed = false, .unresolved = false, .written = right.len }, active.current_state());
+    try std.testing.expectEqual(DegradedReason.zig_malformed_source, active.degradation().?);
+    try std.testing.expectEqualStrings(right, active.result());
+    try active.undo(active.identity().generation);
+    try std.testing.expectEqualStrings(base, active.result());
+    try std.testing.expect(active.current_state().unresolved);
+    try active.redo(active.identity().generation);
+    try std.testing.expectEqualStrings(right, active.result());
+    try active.reset_original(active.identity().generation);
+    try std.testing.expectEqualStrings(base, active.result());
+    try std.testing.expect(active.current_state().unresolved);
+    try std.testing.expectEqual(DegradedReason.zig_malformed_source, active.degradation().?);
 }
 
 test "multi-hunk capacity opens lossless unresolved byte review" {
@@ -640,7 +693,7 @@ test "multi-hunk capacity opens lossless unresolved byte review" {
     }
     var result: [258]u8 = undefined;
     var scratch: [258]u8 = undefined;
-    var history: [516]u8 = undefined;
+    var history: [1024]u8 = undefined;
     var records: [4]Record = undefined;
     var left_base: [128]multihunk.Hunk = undefined;
     var right_base: [128]multihunk.Hunk = undefined;
@@ -658,8 +711,18 @@ test "multi-hunk capacity opens lossless unresolved byte review" {
     try std.testing.expectEqualSlices(u8, &base, active.result());
     try std.testing.expectEqual(@as(usize, 0), active.left_changes.len);
     try active.choose(active.identity().generation, .left);
-    try std.testing.expect(!active.current_state().unresolved);
+    try std.testing.expectEqual(State{ .origin = .manual_left, .reviewed = false, .unresolved = false, .written = left.len }, active.current_state());
+    try std.testing.expectEqual(DegradedReason.resource_limited, active.degradation().?);
     try std.testing.expectEqualSlices(u8, &left, active.result());
+    try active.undo(active.identity().generation);
+    try std.testing.expect(active.current_state().unresolved);
+    try std.testing.expectEqualSlices(u8, &base, active.result());
+    try active.redo(active.identity().generation);
+    try std.testing.expectEqualSlices(u8, &left, active.result());
+    try active.reset_original(active.identity().generation);
+    try std.testing.expect(active.current_state().unresolved);
+    try std.testing.expectEqual(DegradedReason.resource_limited, active.degradation().?);
+    try std.testing.expectEqualSlices(u8, &base, active.result());
 }
 
 test "conflict edits require explicit in-memory resolution and undo redo preserve it" {
@@ -687,6 +750,25 @@ test "conflict edits require explicit in-memory resolution and undo redo preserv
     try std.testing.expect(!session.current_state().unresolved);
     try session.redo(session.identity().generation);
     try std.testing.expect(session.current_state().reviewed);
+}
+
+test "untouched conflict resolution retains provenance through history" {
+    var result: [16]u8 = undefined;
+    var scratch: [16]u8 = undefined;
+    var history: [64]u8 = undefined;
+    var records: [4]Record = undefined;
+    var session = try Session.init(.{ .base = "abc", .left = "aXc", .right = "aYc" }, .{ .result = &result, .scratch = &scratch, .history = &history, .records = &records });
+    try session.mark_resolved(session.identity().generation);
+    try std.testing.expectEqual(State{ .origin = .conflict, .reviewed = false, .unresolved = false, .written = 3 }, session.current_state());
+    try std.testing.expectEqualStrings("abc", session.result());
+    try session.undo(session.identity().generation);
+    try std.testing.expectEqual(State{ .origin = .conflict, .reviewed = false, .unresolved = true, .written = 3 }, session.current_state());
+    try std.testing.expectEqualStrings("abc", session.result());
+    try session.redo(session.identity().generation);
+    try std.testing.expectEqual(State{ .origin = .conflict, .reviewed = false, .unresolved = false, .written = 3 }, session.current_state());
+    try session.reset_original(session.identity().generation);
+    try std.testing.expectEqual(State{ .origin = .conflict, .reviewed = false, .unresolved = true, .written = 3 }, session.current_state());
+    try std.testing.expectEqualStrings("abc", session.result());
 }
 
 test "branching undo preserves record zero and reset" {
