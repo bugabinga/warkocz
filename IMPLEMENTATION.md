@@ -126,7 +126,11 @@ Typography pins remain investigation-only and unapproved for adoption.
 - First expanded hosted run `39791066122` passed Windows; Linux/macOS exposed Windows-only environment construction and nonportable test paths/failure injection.
 - CI repair preserves explicit unsupported non-Windows mutation environments, uses OS-native path fixtures, and injects write failure at the transport boundary without touching process stdin.
 - Repair verification: local ReleaseSafe check passed 358/358 overlapping executions; Linux x86_64/macOS ARM64 core compile-only checks passed.
-- Fresh hosted checks on the repair commit remain required before merge.
+- Second expanded hosted run `39795047791` passed Windows; Linux/macOS each passed 356/358 overlapping executions, with only the shared POSIX URI encoder regression failing in both test roots.
+- Corrected the encoder's extra slash without changing expected URIs; host-independent cases cover POSIX root, POSIX/Windows absolute paths, Unicode/reserved bytes, exact capacity, and undersized buffers.
+- New regression failed before the fix; all six protocol tests then passed in ReleaseSafe and Debug.
+- Repair-commit native LSP fixtures passed 4/4 steps with fifteen invocations; installed-Git verification passed 180/180 overlapping executions.
+- Fresh hosted checks on the URI repair remain required before merge.
 
 ## Earlier verification
 

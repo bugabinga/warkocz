@@ -157,7 +157,7 @@ pub fn byteToPosition(text: []const u8, offset: usize) Error!Position {
 /// Encodes URI path bytes without shell interpretation; destination must fit exact result.
 pub fn pathToUri(path: []const u8, destination: []u8) Error![]u8 {
     if (!std.unicode.utf8ValidateSlice(path)) return error.InvalidPath;
-    const prefix = "file:///";
+    const prefix: []const u8 = if (std.mem.startsWith(u8, path, "/")) "file://" else "file:///";
     if (destination.len < prefix.len) return error.BufferTooSmall;
     @memcpy(destination[0..prefix.len], prefix);
     var out = prefix.len;
@@ -410,6 +410,23 @@ test "bounded JSON escaping and URI encoding" {
     try std.testing.expect(std.mem.indexOf(u8, value, "\\\"b") != null);
     var uri: [64]u8 = undefined;
     try std.testing.expectEqualStrings("file:///a%20b%23", try pathToUri("a b#", &uri));
+}
+
+test "URI absolute paths preserve roots and bounded percent encoding on every host" {
+    const cases = [_]struct { path: []const u8, uri: []const u8 }{
+        .{ .path = "/", .uri = "file:///" },
+        .{ .path = "/work/result file #?.zig", .uri = "file:///work/result%20file%20%23%3F.zig" },
+        .{ .path = "C:/work/result file #?.zig", .uri = "file:///C:/work/result%20file%20%23%3F.zig" },
+        .{ .path = "/work/ż%\\.zig", .uri = "file:///work/%C5%BC%25%5C.zig" },
+    };
+    var output: [128]u8 = undefined;
+    for (cases) |case| {
+        try std.testing.expectEqualStrings(case.uri, try pathToUri(case.path, &output));
+        output[case.uri.len] = 0xa5;
+        try std.testing.expectEqualStrings(case.uri, try pathToUri(case.path, output[0..case.uri.len]));
+        try std.testing.expectEqual(@as(u8, 0xa5), output[case.uri.len]);
+        try std.testing.expectError(error.BufferTooSmall, pathToUri(case.path, output[0 .. case.uri.len - 1]));
+    }
 }
 
 test "session lifecycle, result snapshots, and bounded cancellation" {
