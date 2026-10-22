@@ -323,7 +323,7 @@ fn execute_status_with_lock(io: std.Io, lock_file: std.Io.File, preflight: Prefl
 
 fn run_status_command(io: std.Io, command: []const []const u8, environment_workspace: []u8, sources: ConfigSources, workspace: []u8, stdout_limit: usize, stderr_limit: usize, timeout: std.Io.Timeout) Error!std.process.RunResult {
     var environment_allocator = std.heap.FixedBufferAllocator.init(environment_workspace);
-    var environment = std.process.Environ.createMap(.{ .block = .global }, environment_allocator.allocator()) catch return error.OutputLimitExceeded;
+    var environment = try inherited_environment(environment_allocator.allocator());
     defer environment.deinit();
     sanitize_git_environment(&environment);
     apply_config_sources(&environment, sources) catch return error.OutputLimitExceeded;
@@ -353,7 +353,7 @@ fn execute_with_lock(io: std.Io, lock_file: std.Io.File, preflight: Preflight, i
     const command = try argv_resolved(request, fresh.executable, fresh.repository, resolved_start_point, &args);
     if (stdout_limit == 0 or stderr_limit == 0) return error.OutputLimitExceeded;
     var environment_allocator = std.heap.FixedBufferAllocator.init(buffers.environment);
-    var environment = std.process.Environ.createMap(.{ .block = .global }, environment_allocator.allocator()) catch return error.OutputLimitExceeded;
+    var environment = try inherited_environment(environment_allocator.allocator());
     defer environment.deinit();
     sanitize_git_environment(&environment);
     apply_config_sources(&environment, buffers.config_sources) catch return error.OutputLimitExceeded;
@@ -1073,7 +1073,7 @@ fn run(io: std.Io, command: []const []const u8, workspace: []u8, environment_wor
     guarded_command[1] = "--no-lazy-fetch";
     @memcpy(guarded_command[2..][0 .. command.len - 1], command[1..]);
     var environment_allocator = std.heap.FixedBufferAllocator.init(environment_workspace);
-    var environment = std.process.Environ.createMap(.{ .block = .global }, environment_allocator.allocator()) catch return error.OutputLimitExceeded;
+    var environment = try inherited_environment(environment_allocator.allocator());
     var allocator = std.heap.FixedBufferAllocator.init(workspace);
     defer environment.deinit();
     sanitize_git_environment(&environment);
@@ -1108,6 +1108,11 @@ fn command_label(command: []const []const u8) []const u8 {
     return "other";
 }
 
+fn inherited_environment(allocator: std.mem.Allocator) Error!std.process.Environ.Map {
+    if (comptime builtin.os.tag == .windows) return std.process.Environ.createMap(.{ .block = .global }, allocator) catch return error.OutputLimitExceeded;
+    return error.UnsupportedMutationPlatform;
+}
+
 fn apply_config_sources(environment: *std.process.Environ.Map, sources: ConfigSources) std.mem.Allocator.Error!void {
     if (sources.global) |path| try environment.put("GIT_CONFIG_GLOBAL", path);
     if (sources.system) |path| try environment.put("GIT_CONFIG_SYSTEM", path);
@@ -1134,7 +1139,7 @@ fn git_routing_override(key: []const u8) bool {
 
 fn execution_environment_fingerprint(workspace: []u8, sources: ConfigSources) Error!Fingerprint {
     var allocator = std.heap.FixedBufferAllocator.init(workspace);
-    var environment = std.process.Environ.createMap(.{ .block = .global }, allocator.allocator()) catch return error.OutputLimitExceeded;
+    var environment = try inherited_environment(allocator.allocator());
     defer environment.deinit();
     sanitize_git_environment(&environment);
     apply_config_sources(&environment, sources) catch return error.OutputLimitExceeded;
@@ -1287,11 +1292,18 @@ fn same(left: Fingerprint, right: Fingerprint) bool {
 }
 
 test "whole-file argv has literal pathspec mode and separator" {
+    const git_exe = if (builtin.os.tag == .windows) "C:/Git/bin/git.exe" else "/git/bin/git";
+    const repository = if (builtin.os.tag == .windows) "C:/fixture" else "/fixture";
     var storage: [9][]const u8 = undefined;
-    const command = try argv(.{ .stage = .{ .path = "dir/file.txt" } }, "C:/Git/bin/git.exe", "C:/fixture", &storage);
+    const command = try argv(.{ .stage = .{ .path = "dir/file.txt" } }, git_exe, repository, &storage);
     try std.testing.expectEqualStrings("--literal-pathspecs", command[1]);
     try std.testing.expectEqualStrings("--", command[6]);
 }
+test "non-Windows inherited environment is unsupported" {
+    if (comptime builtin.os.tag == .windows) return;
+    try std.testing.expectError(error.UnsupportedMutationPlatform, inherited_environment(std.testing.allocator));
+}
+
 test "branch requests reject option-like and control-byte names" {
     try std.testing.expectError(error.InvalidBranchName, validate_request(.{ .branch_delete = .{ .target = "--help" } }));
     try std.testing.expectError(error.InvalidBranchName, validate_request(.{ .branch_create = .{ .name = "bad\nname", .start_point = "HEAD" } }));

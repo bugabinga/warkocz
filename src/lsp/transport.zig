@@ -464,11 +464,15 @@ pub const Background = struct {
     }
 
     fn write_command(self: *Background, stdin: std.Io.File, command: Command, wire: []u8) void {
+        self.write_command_with_writer(stdin, command, wire, contained_process.write_all);
+    }
+
+    fn write_command_with_writer(self: *Background, stdin: std.Io.File, command: Command, wire: []u8, comptime writer: contained_process.Write) void {
         const json = self.encode_command_or_fail(command, wire) orelse return;
         self.mutex.lockUncancelable(self.io);
         self.command_write_started = true;
         self.mutex.unlock(self.io);
-        send(self.io, stdin, json, far_deadline(self.io)) catch |err| self.record_failure(err);
+        send_with_writer(self.io, stdin, json, far_deadline(self.io), writer) catch |err| self.record_failure(err);
     }
 
     fn encode_command_or_fail(self: *Background, command: Command, wire: []u8) ?[]const u8 {
@@ -930,22 +934,20 @@ test "bounded JSON-RPC parser rejects ambiguity and binds diagnostics exactly" {
 
 test "failed initialized notification cannot commit capabilities" {
     const failing_write = struct {
-        fn operate(_: ?*anyopaque, operation: std.Io.Operation) std.Io.Cancelable!std.Io.Operation.Result {
-            std.debug.assert(operation == .file_write_streaming);
-            return .{ .file_write_streaming = error.BrokenPipe };
+        fn write(_: std.Io, _: std.Io.File, bytes: []const u8, _: std.Io.Clock.Timestamp) contained_process.WriteError!void {
+            std.debug.assert(bytes.len > 0);
+            return error.Failed;
         }
     };
-    var io = std.testing.io;
-    var vtable = io.vtable.*;
-    vtable.operate = failing_write.operate;
-    io.vtable = &vtable;
+    const io = std.testing.io;
     var state: client.Client = undefined;
     state.init();
     state.running = true;
     var wire: [128]u8 = undefined;
     const initialized = try state.initialized(&wire);
     const deadline = std.Io.Clock.Timestamp.now(io, .awake).addDuration(.{ .raw = .fromSeconds(1), .clock = .awake });
-    try std.testing.expectError(error.WriteFailed, send(io, std.Io.File.stdin(), initialized, deadline));
+    const unused_pipe: std.Io.File = undefined;
+    try std.testing.expectError(error.WriteFailed, send_with_writer(io, unused_pipe, initialized, deadline, failing_write.write));
     try std.testing.expect(!state.session.initialized and !state.capabilities_known);
 }
 
@@ -1083,19 +1085,15 @@ test "outbound encoding failure becomes terminal transport failure" {
 
 test "outbound write failure suppresses advanced document state and publications" {
     const failing_write = struct {
-        fn operate(_: ?*anyopaque, operation: std.Io.Operation) std.Io.Cancelable!std.Io.Operation.Result {
-            std.debug.assert(operation == .file_write_streaming);
-            std.debug.assert(operation.file_write_streaming.data.len > 0);
-            return .{ .file_write_streaming = error.BrokenPipe };
+        fn write(_: std.Io, _: std.Io.File, bytes: []const u8, _: std.Io.Clock.Timestamp) contained_process.WriteError!void {
+            std.debug.assert(bytes.len > 0);
+            return error.Failed;
         }
     };
-    var vtable = std.testing.io.vtable.*;
-    vtable.operate = failing_write.operate;
     const background = try std.testing.allocator.create(Background);
     defer std.testing.allocator.destroy(background);
     background.init();
     background.io = std.testing.io;
-    background.io.vtable = &vtable;
     background.state = try std.testing.allocator.create(client.Client);
     defer std.testing.allocator.destroy(background.state);
     background.state.init();
@@ -1106,8 +1104,8 @@ test "outbound write failure suppresses advanced document state and publications
     var change = Background.Change{ .uri = undefined, .uri_len = 1, .version = 1, .text = undefined, .text_len = 1 };
     change.uri[0] = 'x';
     change.text[0] = 'y';
-    // The injected operation never touches this borrowed process handle.
-    background.write_command(std.Io.File.stdin(), .{ .change = change }, &wire);
+    const unused_pipe: std.Io.File = undefined;
+    background.write_command_with_writer(unused_pipe, .{ .change = change }, &wire, failing_write.write);
     try std.testing.expect(background.command_write_started);
     try std.testing.expectEqual(@as(?Error, error.WriteFailed), background.failed());
     try std.testing.expectEqual(@as(?i32, 1), background.state.document_version("x"));
@@ -1170,13 +1168,19 @@ fn json_unsigned(json: []const u8, prefix: []const u8) ?u32 {
 }
 
 fn send(io: std.Io, pipe: std.Io.File, json: []const u8, deadline: std.Io.Clock.Timestamp) Error!void {
+    return send_with_writer(io, pipe, json, deadline, contained_process.write_all);
+}
+
+/// Test seam injects terminal pipe failure without writing test bytes to a process handle.
+fn send_with_writer(io: std.Io, pipe: std.Io.File, json: []const u8, deadline: std.Io.Clock.Timestamp, writer: contained_process.Write) Error!void {
     var header: [48]u8 = undefined;
     const prefix = std.fmt.bufPrint(&header, "Content-Length: {d}\r\n\r\n", .{json.len}) catch return error.TransportFailed;
-    try write_all(io, pipe, prefix, deadline);
-    try write_all(io, pipe, json, deadline);
+    try write_all_with_writer(io, pipe, prefix, deadline, writer);
+    try write_all_with_writer(io, pipe, json, deadline, writer);
 }
-fn write_all(io: std.Io, pipe: std.Io.File, bytes: []const u8, deadline: std.Io.Clock.Timestamp) Error!void {
-    contained_process.write_all(io, pipe, bytes, deadline) catch |err| switch (err) {
+
+fn write_all_with_writer(io: std.Io, pipe: std.Io.File, bytes: []const u8, deadline: std.Io.Clock.Timestamp, writer: contained_process.Write) Error!void {
+    writer(io, pipe, bytes, deadline) catch |err| switch (err) {
         error.Timeout => return error.ChildTimeout,
         error.Failed => return error.WriteFailed,
     };

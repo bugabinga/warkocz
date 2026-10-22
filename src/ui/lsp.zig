@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const files = @import("../files.zig");
 const client = @import("../lsp/client.zig");
@@ -257,10 +258,16 @@ test "result LSP chooser builds percent-escaped output URI without source input"
     var storage: Storage = undefined;
     var service: Service = undefined;
     service.init(&storage);
-    try service.choose_executable("C:/tools/server.exe");
-    try service.choose_workspace("C:/work", "C:/work/result file.zig", "const x = 1;");
+    if (builtin.os.tag == .windows) {
+        try service.choose_executable("C:/tools/server.exe");
+        try service.choose_workspace("C:/work", "C:/work/result file #?.zig", "const x = 1;");
+        try std.testing.expectEqualStrings("file:///C:/work/result%20file%20%23%3F.zig", service.uri());
+    } else {
+        try service.choose_executable("/tools/server");
+        try service.choose_workspace("/work", "/work/result file #?.zig", "const x = 1;");
+        try std.testing.expectEqualStrings("file:///work/result%20file%20%23%3F.zig", service.uri());
+    }
     try std.testing.expectEqual(Stage.review, service.stage);
-    try std.testing.expectEqualStrings("file:///C:/work/result%20file.zig", service.uri());
     try std.testing.expectEqual(@as(i32, 0), service.version);
 }
 

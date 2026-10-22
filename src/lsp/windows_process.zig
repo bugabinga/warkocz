@@ -15,6 +15,7 @@ pub const SpawnScratch = struct {
 pub const Child = if (builtin.os.tag == .windows) WindowsChild else PosixChild;
 pub const WriteError = error{ Timeout, Failed };
 pub const ReadError = error{ Timeout, Failed };
+pub const Write = *const fn (std.Io, std.Io.File, []const u8, std.Io.Clock.Timestamp) WriteError!void;
 
 /// Reads at most `bytes.len`; Windows drains cancelled overlapped completion before returning.
 pub fn read_some(io: std.Io, pipe: std.Io.File, bytes: []u8, deadline: ?std.Io.Clock.Timestamp) ReadError!usize {

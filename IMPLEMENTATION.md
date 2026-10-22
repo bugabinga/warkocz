@@ -122,7 +122,11 @@ Typography pins remain investigation-only and unapproved for adoption.
 - Focused installed-Git destructive-push preflight fixture: 3/3 passed after moving mirror validation before endpoint lookup, so malformed mirror config fails at its owning check.
 - A preceding full installed-Git run passed 178/179; only that new malformed-mirror expected-error case failed before the ordering repair.
 - Final local Debug check/test graph: 21/21 steps, 357/357 overlapping executions passed.
-- Final full installed-Git and hosted-CI results must be collected before merge.
+- Full pre-merge installed-Git suite passed 179/179 overlapping executions after the ordering repair.
+- First expanded hosted run `39791066122` passed Windows; Linux/macOS exposed Windows-only environment construction and nonportable test paths/failure injection.
+- CI repair preserves explicit unsupported non-Windows mutation environments, uses OS-native path fixtures, and injects write failure at the transport boundary without touching process stdin.
+- Repair verification: local ReleaseSafe check passed 358/358 overlapping executions; Linux x86_64/macOS ARM64 core compile-only checks passed.
+- Fresh hosted checks on the repair commit remain required before merge.
 
 ## Earlier verification
 

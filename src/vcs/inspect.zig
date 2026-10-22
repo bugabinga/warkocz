@@ -411,9 +411,11 @@ test "request requires absolute literal Git and repository paths" {
     var branches: [1]Branch = undefined;
     const buffers = Buffers{ .version_workspace = &version, .status_workspace = &status, .history_workspace = &history, .status_rows = &rows, .history_rows = &commits, .branch_workspace = &branch_workspace, .branch_rows = &branches };
     const limits = Limits{ .stdout_bytes = 1, .stderr_bytes = 1, .status_rows = 1, .history_rows = 1, .timeout = .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } } };
-    try std.testing.expectError(error.GitExecutableNotAbsolute, validate_request(.{ .git_exe = "git", .repository_path = "C:/fixture", .history_limit = 1, .limits = limits }, buffers));
-    try std.testing.expectError(error.RepositoryPathNotAbsolute, validate_request(.{ .git_exe = "C:/git.exe", .repository_path = "fixture", .history_limit = 1, .limits = limits }, buffers));
-    try std.testing.expectError(error.NulByte, validate_request(.{ .git_exe = "C:/git\x00.exe", .repository_path = "C:/fixture", .history_limit = 1, .limits = limits }, buffers));
+    const absolute_git = if (builtin.os.tag == .windows) "C:/git.exe" else "/git";
+    const absolute_repository = if (builtin.os.tag == .windows) "C:/fixture" else "/fixture";
+    try std.testing.expectError(error.GitExecutableNotAbsolute, validate_request(.{ .git_exe = "git", .repository_path = absolute_repository, .history_limit = 1, .limits = limits }, buffers));
+    try std.testing.expectError(error.RepositoryPathNotAbsolute, validate_request(.{ .git_exe = absolute_git, .repository_path = "fixture", .history_limit = 1, .limits = limits }, buffers));
+    try std.testing.expectError(error.NulByte, validate_request(.{ .git_exe = if (builtin.os.tag == .windows) "C:/git\x00.exe" else "/git\x00", .repository_path = absolute_repository, .history_limit = 1, .limits = limits }, buffers));
 }
 
 test "porcelain parser preserves raw rename paths" {
