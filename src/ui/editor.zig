@@ -6,7 +6,7 @@ pub const State = struct {
     anchor: usize = 0,
 
     pub fn init(source: []const u8) ?State {
-        if (!is_lossless_ascii(source)) return null;
+        if (!editable_source_allowed(source)) return null;
         return .{ .cursor = source.len, .anchor = source.len };
     }
 
@@ -56,8 +56,8 @@ pub const State = struct {
     }
 };
 
-pub fn is_lossless_ascii(source: []const u8) bool {
-    for (source) |byte| if (byte == 0 or byte > 0x7f) return false;
+pub fn editable_source_allowed(source: []const u8) bool {
+    for (source) |byte| if (byte != '\t' and byte != '\r' and byte != '\n' and (byte < 0x20 or byte > 0x7e)) return false;
     return true;
 }
 
@@ -86,9 +86,7 @@ pub fn offset_for_column(source: []const u8, line_start_offset: usize, target_co
 }
 
 pub fn insertion_allowed(text: []const u8) bool {
-    if (text.len == 0) return false;
-    for (text) |byte| if (byte == 0 or byte > 0x7f or (byte < 0x20 and byte != '\t' and byte != '\r' and byte != '\n')) return false;
-    return true;
+    return text.len != 0 and editable_source_allowed(text);
 }
 
 pub fn previous_boundary(source: []const u8, offset: usize) usize {
@@ -146,17 +144,23 @@ test "ASCII editor boundaries retain CRLF as one newline" {
     try std.testing.expectEqual(@as(usize, 0), state.cursor);
 }
 
-test "selection is bounded and ASCII policy rejects binary or Unicode" {
+test "selection is bounded and editable source matches insertion policy" {
     var state = State.init("abc").?;
     state.move("abc", .left, true);
     try std.testing.expect(state.has_selection());
     try std.testing.expectEqual(@as(usize, 2), state.replacement_range("abc").start);
     state.select_all("abc");
     try std.testing.expectEqual(@as(usize, 3), state.replacement_range("abc").end);
-    try std.testing.expect(!is_lossless_ascii("\x00"));
-    try std.testing.expect(!is_lossless_ascii("\xc3\xa9"));
+    try std.testing.expect(editable_source_allowed("a\t\r\n"));
+    try std.testing.expect(State.init("a\t\r\n") != null);
+    for ([_][]const u8{ "\x00", "\x1b", "\x1f", "\x7f", "\xc3\xa9" }) |unsupported| {
+        try std.testing.expect(!editable_source_allowed(unsupported));
+        try std.testing.expect(State.init(unsupported) == null);
+        try std.testing.expect(!insertion_allowed(unsupported));
+    }
     try std.testing.expect(insertion_allowed("a\t\r\n"));
-    try std.testing.expect(!insertion_allowed("\xc3\xa9"));
+    try std.testing.expect(State.init("") != null);
+    try std.testing.expect(!insertion_allowed(""));
 }
 
 test "editor columns preserve tabs and CRLF boundaries" {

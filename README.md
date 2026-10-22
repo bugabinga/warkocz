@@ -48,7 +48,8 @@ Keep their meaning.**
 > Setup/persistence failure is visible without blocking editing.
 > Welcome provides bounded protected-draft discovery, explicit restore and confirmed Forget selected draft; manual Export remains distinct.
 > Restoring revalidates originals in a worker and preserves unresolved/unreviewed status until deliberate resolution and new-file Save.
-Result editing is provisional lossless ASCII only: CRLF/LF/tabs remain exact, mouse drag and Shift-click select bounded byte ranges without splitting CRLF, selected ranges render visibly, keyboard edits/navigation scroll caret into view, and bounded edge drag autoscrolls. Text-focused keys never invoke plain resolution/save actions; NUL or non-ASCII results remain visibly read-only byte review with whole-side choices.
+Result editing is provisional printable ASCII plus TAB, CR, and LF only: bytes remain exact, mouse drag and Shift-click select bounded byte ranges without splitting CRLF, selected ranges render visibly, keyboard edits/navigation scroll caret into view, and bounded edge drag autoscrolls.
+Text-focused keys never invoke plain resolution/save actions; unsupported controls (including NUL, ESC, and DEL) or non-ASCII results remain visibly read-only byte review with whole-side choices.
 > `SPEC.html` is binding completion contract.
 > This slice does not satisfy it.
 

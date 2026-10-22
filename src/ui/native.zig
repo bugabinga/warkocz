@@ -53,9 +53,9 @@ const actions = [_]ActionInfo{
     .{ .action = .save, .name = "Save", .help = "Publish result as a durable new destination file.", .key = sdl.SDLK_S, .binding = "S" },
     .{ .action = .complete, .name = "Complete", .help = "Finish only after current durable output is verified.", .key = sdl.SDLK_RETURN, .binding = "Enter" },
     .{ .action = .next_change, .name = "Next change", .help = "Navigate exact bounded line-diff changes in source panes.", .key = sdl.SDLK_N, .binding = "N" },
-    .{ .action = .copy, .name = "Copy", .help = "Copy selected result ASCII bytes to clipboard.", .key = sdl.SDLK_C, .binding = "Ctrl+C" },
-    .{ .action = .cut, .name = "Cut", .help = "Copy selection then delete it from result.", .key = sdl.SDLK_X, .binding = "Ctrl+X" },
-    .{ .action = .paste, .name = "Paste", .help = "Insert ASCII clipboard bytes at result selection.", .key = sdl.SDLK_V, .binding = "Ctrl+V" },
+    .{ .action = .copy, .name = "Copy", .help = "Copy selected editable result bytes to clipboard.", .key = sdl.SDLK_C, .binding = "Ctrl+C" },
+    .{ .action = .cut, .name = "Cut", .help = "Copy selection then delete it from editable result.", .key = sdl.SDLK_X, .binding = "Ctrl+X" },
+    .{ .action = .paste, .name = "Paste", .help = "Insert supported clipboard bytes at result selection.", .key = sdl.SDLK_V, .binding = "Ctrl+V" },
     .{ .action = .select_all, .name = "Select all", .help = "Select whole editable result.", .key = sdl.SDLK_A, .binding = "Ctrl+A" },
     .{ .action = .export_recovery, .name = "Export encrypted recovery draft", .help = "Export an additional encrypted DPAPI draft; automatic recovery remains separate.", .key = sdl.SDLK_S, .binding = "Ctrl+Shift+S" },
     .{ .action = .attach_result_language_server, .name = "Attach result language server", .help = "Choose exact server executable and workspace; review trust before it starts.", .key = sdl.SDLK_UNKNOWN, .binding = "Palette" },
@@ -565,7 +565,7 @@ pub fn run(init: std.process.Init, request: invocation.Request) !void {
     defer opened.deinit();
     var model = Model{ .mode = if (opened.active.mode == .two_way) .diff else .merge, .status = "Ctrl+P actions | ASCII diagnostic byte-view, not editor", .recovery_picker = .{ .io = init.io }, .lsp_picker = .{ .io = init.io }, .window = window, .clipboard = opened.clipboard };
     model.editor = editor.State.init(opened.active.result());
-    model.status = if (restored) "RECOVERY RESTORED | originals revalidated | unresolved and unreviewed | reconcile manually before Save" else if (!automatic_recovery_ready) "RECOVERY UNPROTECTED | automatic encrypted recovery unavailable | editor remains usable" else if (model.editor == null) "READ-ONLY BYTE REVIEW | recovery ready | binary or non-ASCII bytes remain exact review" else "EDITABLE ASCII RESULT | CRLF preserved | automatic recovery ready";
+    model.status = if (restored) "RECOVERY RESTORED | originals revalidated | unresolved and unreviewed | reconcile manually before Save" else if (!automatic_recovery_ready) "RECOVERY UNPROTECTED | automatic encrypted recovery unavailable | editor remains usable" else if (model.editor == null) "READ-ONLY BYTE REVIEW | recovery ready | unsupported control, binary, or non-ASCII bytes remain exact review" else "EDITABLE ASCII RESULT | CRLF preserved | automatic recovery ready";
     try event_loop(renderer, window, &model, &opened);
 }
 
@@ -1473,7 +1473,7 @@ fn index_lines(lines: *Lines, source: []const u8) void {
     std.debug.assert(lines.offsets.len > source.len);
     lines.count = 1;
     lines.offsets[0] = 0;
-    for (source, 0..) |byte, index| if (byte == '\n') {
+    for (source, 0..) |byte, index| if (byte == '\n' or (byte == '\r' and (index + 1 == source.len or source[index + 1] != '\n'))) {
         lines.offsets[lines.count] = @intCast(index + 1);
         lines.count += 1;
     };
@@ -1798,7 +1798,7 @@ fn action_index(action: Action) usize {
 
 fn insert_text(text: []const u8, model: *Model, opened: ?*Opened) !void {
     if (!editor.insertion_allowed(text)) {
-        model.status = "EDIT REJECTED | lossless ASCII only; result unchanged";
+        model.status = "EDIT REJECTED | printable ASCII plus TAB, CR, LF only; result unchanged";
         return;
     }
     const current = opened orelse return;
@@ -1880,7 +1880,7 @@ fn paste_clipboard(model: *Model, opened: ?*Opened) !void {
     defer sdl.SDL_free(value);
     const text = std.mem.span(value);
     if (!editor.insertion_allowed(text)) {
-        model.status = "PASTE REJECTED | clipboard is not lossless ASCII; result unchanged";
+        model.status = "PASTE REJECTED | clipboard is not printable ASCII plus TAB, CR, LF; result unchanged";
         return;
     }
     try insert_text(text, model, opened);
@@ -1962,7 +1962,7 @@ fn disabled_reason(index: usize, model: *const Model, opened: ?*const Opened) ?[
         },
         .complete => if (current.active.current_state().unresolved) "Resolve result before Complete." else if (model.completion_job_id != null) "Complete verification in progress; closing remains incomplete." else if (!model_has_durable_receipt(model, current)) "Complete requires durable Save for current generation." else null,
         .next_change => if (current.active.left_changes.len == 0 and current.active.right_changes.len == 0) "No bounded multi-hunk source changes available." else null,
-        .copy, .cut, .paste, .select_all => if (model.editor == null) "Result editing supports lossless ASCII only; binary or non-ASCII bytes remain exact read-only review." else null,
+        .copy, .cut, .paste, .select_all => if (model.editor == null) "Result editing supports printable ASCII plus TAB, CR, LF only; unsupported controls, binary, or non-ASCII bytes remain exact read-only review." else null,
         .attach_result_language_server => if (current.lsp == null) "Language-server storage unavailable." else if (model.lsp_picker_pending) "Language-server selection is in progress." else if (current.lsp.?.stage != .detached) "Detach current language server before attaching another." else null,
         .confirm_result_language_server_trust => if (current.lsp == null or current.lsp.?.stage != .review) "Choose executable and workspace, then wait for readonly review." else if (!lsp_review_ready(model, current)) "Display complete exact trust review before Confirm." else null,
         .detach_result_language_server => if (current.lsp == null or current.lsp.?.stage == .detached) "No attached language server." else if (model.lsp_picker_pending) "Language-server selection is in progress." else null,
@@ -2144,7 +2144,7 @@ fn apply_action(index: usize, model: *Model, opened: ?*Opened) void {
     model.scroll[1].line = @min(model.scroll[1].line, current.lines[1].count - 1);
     model.editor = editor.State.init(current.active.result());
     scroll_to_editor(model, current);
-    model.status = if (model.editor == null) "READ-ONLY BYTE REVIEW | result contains binary NUL or non-ASCII bytes; exact whole-side choices only" else session_status(&current.active);
+    model.status = if (model.editor == null) "READ-ONLY BYTE REVIEW | result contains unsupported control, binary, or non-ASCII bytes; exact whole-side choices only" else session_status(&current.active);
     request_auto_recovery(model, current);
     sync_lsp_result(model, current);
     std.debug.assert(current.lines[1].count > model.scroll[1].line);
@@ -3856,7 +3856,7 @@ pub fn gpu_save_close_pending_completion_test() !void {
 /// recovery-picker result starts the DPAPI worker, and welcome's copied restore
 /// paths feed a distinct recovery LoadJob.  OS picker presentation remains manual.
 pub fn gpu_recovery_restore_e2e_test() !void {
-    for ([_][]const u8{ "lefT\r\n", "", "first\r\nsecond\nthird" }) |draft| try gpu_recovery_restore_scenario(draft);
+    for ([_][]const u8{ "lefT\r\n", "", "first\r\nsecond\nthird", "bare\rcarriage" }) |draft| try gpu_recovery_restore_scenario(draft);
 }
 
 fn gpu_recovery_restore_scenario(draft: []const u8) !void {
@@ -4165,7 +4165,8 @@ fn recovery_restore_scenario(io: std.Io, renderer: *sdl.SDL_Renderer, window: *s
     defer opened.deinit();
     try opened.init_save(io);
     try std.testing.expectEqualStrings(draft, opened.active.result());
-    try std.testing.expectEqual(@as(usize, 1) + std.mem.count(u8, draft, "\n"), opened.lines[1].count);
+    const expected_lines = 1 + std.mem.count(u8, draft, "\n") + std.mem.count(u8, draft, "\r") - std.mem.count(u8, draft, "\r\n");
+    try std.testing.expectEqual(expected_lines, opened.lines[1].count);
     try std.testing.expect(opened.active.current_state().unresolved and !opened.active.current_state().reviewed);
     var model = Model{ .mode = .merge, .status = session_status(&opened.active), .editor = editor.State.init(opened.active.result()), .clipboard = opened.clipboard };
     try update_layout(renderer, window, &model);
@@ -4685,13 +4686,13 @@ test "LSP review blocks covered toolbar clicks" {
 }
 
 test "native diagnostic view preserves bytes, tabs, escapes and partial horizontal cells" {
-    const source = "a\t\r\x00\xC3\xA9z";
+    const source = "a\t\r\x00\x1B\x7F\xC3\xA9z";
     var output: [64]u8 = undefined;
     const length = diagnostic_line(source, 0, &output);
-    try std.testing.expectEqualStrings("a   \\x0D\\x00\\xC3\\xA9z", output[0..length]);
+    try std.testing.expectEqualStrings("a   \\x0D\\x00\\x1B\\x7F\\xC3\\xA9z", output[0..length]);
     const partial = diagnostic_line(source, 6, output[0..5]);
     try std.testing.expectEqualStrings("0D\\x0", output[0..partial]);
-    try std.testing.expectEqualStrings("a\t\r\x00\xC3\xA9z", source);
+    try std.testing.expectEqualStrings("a\t\r\x00\x1B\x7F\xC3\xA9z", source);
     try std.testing.expectEqual(@as(usize, 0), diagnostic_line(source, 99, &output));
 }
 
@@ -4704,6 +4705,19 @@ test "native line index retains empty lines and trailing LF" {
     index_lines(&lines, "");
     try std.testing.expectEqual(@as(usize, 1), lines.count);
     try std.testing.expectEqual(@as(u32, 0), lines.offsets[0]);
+}
+
+test "native line index maps mixed CR LF and CRLF to editor and LSP positions" {
+    const source = "a\rb\r\nc\n";
+    var offsets: [source.len + 1]u32 = undefined;
+    var lines = Lines{ .offsets = &offsets };
+    index_lines(&lines, source);
+    try std.testing.expectEqualSlices(u32, &.{ 0, 2, 5, 7 }, lines.offsets[0..lines.count]);
+    try std.testing.expectEqual(@as(usize, 2), editor.offset_for_column(source, lines.offsets[1], 0));
+    try std.testing.expectEqual(@as(usize, 3), editor.offset_for_column(source, lines.offsets[1], 1));
+    const position = lsp_position(source, lines, 3);
+    try std.testing.expectEqual(@as(u32, 1), position.line);
+    try std.testing.expectEqual(@as(u32, 1), position.character);
 }
 
 test "native editor replacement reindexes before scrolling shortened result" {
@@ -4871,32 +4885,40 @@ test "native real controls guard base, require visible help, choose, undo and sc
     try std.testing.expect(model.completion_job_id != null);
 }
 
-test "native binary result remains read-only with exact whole-side recovery" {
-    var result: [16]u8 = undefined;
-    var scratch: [16]u8 = undefined;
-    var history: [64]u8 = undefined;
-    var records: [4]session.Record = undefined;
-    var offsets: [3][8]u32 = undefined;
-    var opened = Opened{
-        .active = try session.Session.init_two_way("left\r\n", "\x00right\xff", .{ .result = &result, .scratch = &scratch, .history = &history, .records = &records }),
-        .labels = .{ .base = "none", .left = "left", .right = "right", .output = "output" },
-        .destination = "output",
-        .input_paths = .{ .base = null, .left = "left", .right = "right" },
-        .lines = undefined,
-        .save = undefined,
-    };
-    for (&opened.lines, &offsets) |*lines, *region| lines.* = .{ .offsets = region };
-    index_lines(&opened.lines[0], opened.active.inputs.left);
-    index_lines(&opened.lines[1], opened.active.result());
-    index_lines(&opened.lines[2], opened.active.inputs.right);
-    var model = Model{ .mode = .diff, .status = "test", .editor = editor.State.init(opened.active.result()) };
-    try std.testing.expect(model.editor == null);
-    for ([_]usize{ action_index(.copy), action_index(.cut), action_index(.paste), action_index(.select_all) }) |index| {
-        try std.testing.expect(disabled_reason(index, &model, &opened) != null);
+test "native controls remain read-only with exact whole-side recovery" {
+    for ([_][]const u8{ "\x00right\xff", "\x1babc", "\x7fabc", "\x1fabc" }) |unsupported| {
+        var result: [16]u8 = undefined;
+        var scratch: [16]u8 = undefined;
+        var history: [64]u8 = undefined;
+        var records: [4]session.Record = undefined;
+        var offsets: [3][17]u32 = undefined;
+        var opened = Opened{
+            .active = try session.Session.init_two_way("left\r\n", unsupported, .{ .result = &result, .scratch = &scratch, .history = &history, .records = &records }),
+            .labels = .{ .base = "none", .left = "left", .right = "right", .output = "output" },
+            .destination = "output",
+            .input_paths = .{ .base = null, .left = "left", .right = "right" },
+            .lines = undefined,
+            .save = undefined,
+        };
+        for (&opened.lines, &offsets) |*lines, *region| lines.* = .{ .offsets = region };
+        index_lines(&opened.lines[0], opened.active.inputs.left);
+        index_lines(&opened.lines[1], opened.active.result());
+        index_lines(&opened.lines[2], opened.active.inputs.right);
+        var model = Model{ .mode = .diff, .status = "test", .editor = editor.State.init(opened.active.result()) };
+        try std.testing.expect(model.editor == null);
+        try std.testing.expectEqualStrings(unsupported, opened.active.result());
+        for ([_]usize{ action_index(.copy), action_index(.cut), action_index(.paste), action_index(.select_all) }) |index| {
+            try std.testing.expect(disabled_reason(index, &model, &opened) != null);
+        }
+        try std.testing.expect(disabled_reason(action_index(.choose_left), &model, &opened) == null);
+        try std.testing.expect(disabled_reason(action_index(.choose_right), &model, &opened) == null);
+        apply_action(action_index(.choose_left), &model, &opened);
+        try std.testing.expectEqualStrings("left\r\n", opened.active.result());
+        try std.testing.expect(model.editor != null);
+        apply_action(action_index(.choose_right), &model, &opened);
+        try std.testing.expectEqualStrings(unsupported, opened.active.result());
+        try std.testing.expect(model.editor == null);
     }
-    apply_action(action_index(.choose_left), &model, &opened);
-    try std.testing.expectEqualStrings("left\r\n", opened.active.result());
-    try std.testing.expect(model.editor != null);
 }
 
 test "native event loop exits only after durable completion drain" {
