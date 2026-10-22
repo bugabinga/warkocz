@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const invocation = @import("invocation.zig");
+const native = @import("ui/native.zig");
 const build_options = @import("build_options");
 
 comptime {
@@ -23,11 +24,14 @@ pub fn main(init: std.process.Init) !void {
     };
     std.debug.assert(arguments.len >= 1);
     const request = try invocation.parse(arguments[1..]);
+    switch (request) {
+        .bootstrap, .diff, .merge, .repo => return native.run(init, request),
+        .help, .version => {},
+    }
     const message = switch (request) {
-        .bootstrap => "warkocz: bootstrap only; graphical client not implemented.\n",
-        .help => invocation.usage ++ "\n\nDiff/merge execution unavailable; requests fail without opening files.\nExit 0: information only. Exit 1: invalid or unavailable operation.\n",
-        .version => "warkocz " ++ build_options.version ++ " (development; not a usable Git client)\n",
-        .diff, .merge => return error.FeatureUnavailable,
+        .help => invocation.usage ++ "\n\nNative graphical diff/merge uses explicit paths. repo performs bounded installed-Git metadata/history inspection through native argv only; worktree status is not scanned until separately reviewed and confirmed. Save publishes only a new output file; replacement and Git integration are not implemented. Exit 0: information or explicitly completed durable new-file output. Exit 1: invalid invocation or incomplete resolution.\n",
+        .version => "warkocz " ++ build_options.version ++ " (development native first slice)\n",
+        else => unreachable,
     };
     std.debug.assert(message.len > 0);
     var output_memory: [256]u8 = undefined;

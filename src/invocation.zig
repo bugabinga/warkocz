@@ -6,6 +6,7 @@ pub const usage =
     \\  warkocz [--help | --version]
     \\  warkocz diff --left PATH --right PATH --output PATH [--left-label VALUE] [--right-label VALUE] [--output-label VALUE] [--wait]
     \\  warkocz merge --base PATH --left PATH --right PATH --output PATH [--base-label VALUE] [--left-label VALUE] [--right-label VALUE] [--output-label VALUE] [--wait]
+    \\  warkocz repo --path PATH --git PATH [--history-limit COUNT]
 ;
 
 pub const ParseError = error{
@@ -17,6 +18,7 @@ pub const ParseError = error{
     EmptyPath,
     NulByte,
     ModeInapplicableOption,
+    InvalidHistoryLimit,
 };
 
 pub const DiffRequest = struct {
@@ -27,6 +29,12 @@ pub const DiffRequest = struct {
     right_label: ?[]const u8,
     output_label: ?[]const u8,
     wait: bool,
+};
+
+pub const RepoRequest = struct {
+    path: []const u8,
+    git: []const u8,
+    history_limit: usize,
 };
 
 pub const MergeRequest = struct {
@@ -47,6 +55,7 @@ pub const Request = union(enum) {
     version,
     diff: DiffRequest,
     merge: MergeRequest,
+    repo: RepoRequest,
 };
 
 const Option = enum {
@@ -58,6 +67,9 @@ const Option = enum {
     left_label,
     right_label,
     output_label,
+    git,
+    path,
+    history_limit,
     wait,
 };
 
@@ -70,6 +82,9 @@ const Options = struct {
     left_label: ?[]const u8 = null,
     right_label: ?[]const u8 = null,
     output_label: ?[]const u8 = null,
+    git: ?[]const u8 = null,
+    path: ?[]const u8 = null,
+    history_limit: ?[]const u8 = null,
     wait: bool = false,
 };
 
@@ -88,6 +103,7 @@ pub fn parse(arguments: []const []const u8) ParseError!Request {
     }
     if (std.mem.eql(u8, command, "diff")) return .{ .diff = try finish_diff(try parse_options(arguments[1..], false)) };
     if (std.mem.eql(u8, command, "merge")) return .{ .merge = try finish_merge(try parse_options(arguments[1..], true)) };
+    if (std.mem.eql(u8, command, "repo")) return .{ .repo = try finish_repo(try parse_options(arguments[1..], false)) };
     return error.UnknownArgument;
 }
 
@@ -117,6 +133,9 @@ fn option_from_argument(argument: []const u8) ?Option {
         .{ .name = "--left-label", .option = .left_label },
         .{ .name = "--right-label", .option = .right_label },
         .{ .name = "--output-label", .option = .output_label },
+        .{ .name = "--git", .option = .git },
+        .{ .name = "--path", .option = .path },
+        .{ .name = "--history-limit", .option = .history_limit },
         .{ .name = "--wait", .option = .wait },
     };
     for (names) |entry| {
@@ -144,6 +163,9 @@ fn set_option(options: *Options, option: Option, arguments: []const []const u8, 
         .left_label => try set_label(&options.left_label, value),
         .right_label => try set_label(&options.right_label, value),
         .output_label => try set_label(&options.output_label, value),
+        .git => try set_path(&options.git, value),
+        .path => try set_path(&options.path, value),
+        .history_limit => try set_label(&options.history_limit, value),
         .wait => unreachable,
     }
 }
@@ -199,6 +221,14 @@ fn finish_diff(options: Options) ParseError!DiffRequest {
     return request;
 }
 
+fn finish_repo(options: Options) ParseError!RepoRequest {
+    if (options.base != null or options.left != null or options.right != null or options.output != null or options.base_label != null or options.left_label != null or options.right_label != null or options.output_label != null or options.wait) return error.ModeInapplicableOption;
+    const history_text = options.history_limit orelse "32";
+    const history_limit = std.fmt.parseInt(usize, history_text, 10) catch return error.InvalidHistoryLimit;
+    if (history_limit == 0) return error.InvalidHistoryLimit;
+    return .{ .path = options.path orelse return error.MissingRequiredOption, .git = options.git orelse return error.MissingRequiredOption, .history_limit = history_limit };
+}
+
 fn finish_merge(options: Options) ParseError!MergeRequest {
     const request = MergeRequest{
         .base = options.base orelse return error.MissingRequiredOption,
@@ -237,6 +267,16 @@ test "parser accepts every request form" {
             try std.testing.expectEqualStrings("R", request.right_label.?);
             try std.testing.expectEqualStrings("O", request.output_label.?);
             try std.testing.expect(request.wait);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    const repo = try parse(&.{ "repo", "--path", "repo path", "--git", "git.exe", "--history-limit", "7" });
+    switch (repo) {
+        .repo => |request| {
+            try std.testing.expectEqualStrings("repo path", request.path);
+            try std.testing.expectEqualStrings("git.exe", request.git);
+            try std.testing.expectEqual(@as(usize, 7), request.history_limit);
         },
         else => return error.TestUnexpectedResult,
     }
@@ -287,4 +327,6 @@ test "parser rejects malformed invocations" {
     try std.testing.expectError(error.EmptyPath, parse(&.{ "diff", "--left", "", "--right", "b", "--output", "c" }));
     try std.testing.expectError(error.NulByte, parse(&.{ "merge", "--base", "a", "--left", "b\x00c", "--right", "c", "--output", "d" }));
     try std.testing.expectError(error.DuplicateOption, parse(&.{ "merge", "--base", "a", "--left", "b", "--right", "c", "--output", "d", "--wait", "--wait" }));
+    try std.testing.expectError(error.InvalidHistoryLimit, parse(&.{ "repo", "--path", "repo", "--git", "git", "--history-limit", "0" }));
+    try std.testing.expectError(error.ModeInapplicableOption, parse(&.{ "repo", "--path", "repo", "--git", "git", "--left", "left" }));
 }
