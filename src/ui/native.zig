@@ -2054,11 +2054,15 @@ fn apply_action(index: usize, model: *Model, opened: ?*Opened) void {
             return;
         },
         .cut => {
+            if (!model.editor.?.has_selection()) {
+                model.status = "CUT REQUIRES RESULT SELECTION | result unchanged";
+                return;
+            }
             copy_selection(model, current) catch |err| {
                 model.status = @errorName(err);
                 return;
             };
-            delete_editor_selection(false, model, opened) catch |err| {
+            replace_editor_selection("", model, current) catch |err| {
                 model.status = @errorName(err);
             };
             return;
@@ -4883,6 +4887,61 @@ test "native real controls guard base, require visible help, choose, undo and sc
     apply_action(8, &model, &opened);
     try std.testing.expect(!model.completed);
     try std.testing.expect(model.completion_job_id != null);
+}
+
+test "native collapsed cut retains result state without clipboard access" {
+    var result: [16]u8 = undefined;
+    var scratch: [16]u8 = undefined;
+    var history: [64]u8 = undefined;
+    var records: [4]session.Record = undefined;
+    var offsets: [3][8]u32 = undefined;
+    var clipboard: [4:0]u8 = .{ 'k', 'e', 'e', 'p' };
+    var opened = Opened{
+        .active = try session.Session.init_two_way("left", "abc", .{ .result = &result, .scratch = &scratch, .history = &history, .records = &records }),
+        .labels = .{ .base = "none", .left = "left", .right = "right", .output = "output" },
+        .destination = "output",
+        .input_paths = .{ .base = null, .left = "left", .right = "right" },
+        .lines = undefined,
+        .save = undefined,
+    };
+    defer opened.deinit();
+    for (&opened.lines, &offsets) |*lines, *region| lines.* = .{ .offsets = region };
+    index_lines(&opened.lines[0], opened.active.inputs.left);
+    index_lines(&opened.lines[1], opened.active.result());
+    index_lines(&opened.lines[2], opened.active.inputs.right);
+    var model = Model{ .mode = .diff, .status = "test", .editor = editor.State.init(opened.active.result()), .clipboard = clipboard[0.. :0], .durable_generation = opened.active.generation, .durable_receipt = .{ .bytes_written = 3, .digest = std.mem.zeroes([32]u8) }, .lsp_synced_generation = opened.active.generation };
+    model.editor.?.cursor = 1;
+    model.editor.?.anchor = 1;
+    const generation = opened.active.generation;
+    const record_count = opened.active.record_count;
+    const history_used = opened.active.history_used;
+    const receipt = model.durable_receipt.?;
+    apply_action(action_index(.cut), &model, &opened);
+    try std.testing.expectEqualStrings("abc", opened.active.result());
+    try std.testing.expectEqual(generation, opened.active.generation);
+    try std.testing.expectEqual(record_count, opened.active.record_count);
+    try std.testing.expectEqual(history_used, opened.active.history_used);
+    try std.testing.expect(std.meta.eql(receipt, model.durable_receipt.?));
+    try std.testing.expectEqual(@as(?u64, generation), model.durable_generation);
+    try std.testing.expectEqual(@as(?u64, generation), model.lsp_synced_generation);
+    try std.testing.expectEqual(@as(usize, 0), model.clipboard_len);
+    try std.testing.expectEqualSlices(u8, "keep", clipboard[0..4]);
+    try std.testing.expectEqual(@as(usize, 1), model.editor.?.cursor);
+    try std.testing.expectEqual(@as(usize, 1), model.editor.?.anchor);
+    try std.testing.expectEqualStrings("CUT REQUIRES RESULT SELECTION | result unchanged", model.status);
+    // A selected Cut whose bounded clipboard storage is unavailable must not delete bytes either.
+    model.clipboard = null;
+    model.editor.?.anchor = 0;
+    model.editor.?.cursor = 2;
+    apply_action(action_index(.cut), &model, &opened);
+    try std.testing.expectEqualStrings("ProvisionalCapacityExceeded", model.status);
+    try std.testing.expectEqualStrings("abc", opened.active.result());
+    try std.testing.expectEqual(generation, opened.active.generation);
+    try std.testing.expectEqual(record_count, opened.active.record_count);
+    try std.testing.expectEqual(history_used, opened.active.history_used);
+    try std.testing.expect(std.meta.eql(receipt, model.durable_receipt.?));
+    try std.testing.expectEqual(@as(usize, 0), model.editor.?.anchor);
+    try std.testing.expectEqual(@as(usize, 2), model.editor.?.cursor);
 }
 
 test "native controls remain read-only with exact whole-side recovery" {
