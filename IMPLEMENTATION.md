@@ -36,6 +36,24 @@ Status authorization is consumed on every attempt, including buffer-validation f
 Remote review refuses confirmation when its bounded endpoint presentation cannot fit the viewport.
 Git review also rejects Enter key-repeat and queued Enter events predating its first matching rendered frame.
 
+## Root-context, push-source, and Cut review repairs
+
+`src/vcs/record.zig` preserves the selected repository's trust identity while running worktree-relative preflight queries, status, and mutations from the verified worktree root.
+Unstage evidence uses literal pathspecs.
+The isolated subdirectory regression checks root/shadow paths, effective attributes, CRLF index bytes, status, Stage, Unstage, and unchanged worktree bytes.
+Push freshness includes all local ref namespaces; moved tag and custom-namespace sources require fresh review before publication.
+Explicit configured push sources additionally bind resolved OIDs, covering pseudorefs and reflog expressions outside the ordinary ref inventory; wildcard sources remain covered by the full inventory.
+Refspec bytes are copied into existing caller-owned scratch before resolving sources, so command-output reuse cannot change the remaining expressions.
+The local-bare regression covers tags, custom namespaces, `FETCH_HEAD`, and `main@{1}` changing while HEAD/index/config remain stable, stale rejection without remote publication, and successful renewed review.
+Independent source review found no remaining blocker in these repaired routes; runtime verification remains separate.
+`src/ui/native.zig` returns before clipboard access for collapsed Cut and deletes only the copied selected range.
+The headless regression checks retained result/history/generation/receipt/editor state and unavailable bounded clipboard storage without accessing the OS clipboard.
+Final-source ReleaseSafe `check test-gpu` passed 25/25 steps; Debug `test test-gpu` passed 23/23 steps.
+Each executed 606 overlapping tests (188 core + 186 native + 232 GPU), plus executable contracts.
+The explicit installed-Git ReleaseSafe suite passed 3/3 steps and 188/188 tests, including the four push-source scenarios and subdirectory regression.
+Linux x86_64 and macOS ARM64 core compile-only checks passed; formatter and diff checks passed.
+These repairs do not establish OS clipboard/input, native non-Windows execution, or full product acceptance.
+
 ## LSP lifecycle evidence
 
 Server confirmation requires an identity-bound review latched only after successful presentation.
