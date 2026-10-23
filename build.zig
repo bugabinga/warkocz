@@ -64,13 +64,69 @@ pub fn build(b: *std.Build) void {
     gpu_test_run.has_side_effects = true;
     test_gpu.dependOn(&gpu_test_run.step);
 
-    const format_paths = &.{ b.path("build.zig"), b.path("build.zig.zon"), b.path("src"), b.path("tests") };
+    const format_paths = &.{ b.path("build.zig"), b.path("build.zig.zon"), b.path("src"), b.path("tests"), b.path("third_party") };
     const format = b.addFmt(.{ .paths = format_paths, .check = false });
     b.step("fmt", "Format Zig sources").dependOn(&format.step);
     const format_check = b.addFmt(.{ .paths = format_paths, .check = true });
     const check = b.step("check", "Check formatting, bounded core, and executable behavior");
     check.dependOn(&format_check.step);
     check.dependOn(tests);
+    add_kb_checks(b, target, optimize, tests, check);
+}
+
+/// Wires kb patch verification: the gate executable applies the vendored
+/// patch table, writes the patched header plus a C smoke file, and a compile
+/// step proves the patched header still compiles. Tests cover pin, golden
+/// hash, markers, and failure diagnostics.
+fn add_kb_checks(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Optimize,
+    tests_step: *std.Build.Step,
+    check_step: *std.Build.Step,
+) void {
+    const kb_module = b.createModule(.{ .root_source_file = b.path("third_party/kb/patches.zig") });
+    const verify = b.addExecutable(.{
+        .name = "warkocz-kb-verify",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/kb_verify.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    verify.root_module.addImport("kb_patches", kb_module);
+    const verify_run = b.addRunArtifact(verify);
+    const patched_directory = verify_run.addOutputDirectoryArg("kb");
+
+    const smoke = b.addSystemCommand(&.{ b.graph.zig_exe, "cc", "-c", "-std=c17", "-DKB_TEXT_SHAPE_IMPLEMENTATION", "-I" });
+    smoke.setName("kb-c-smoke");
+    smoke.addDirectoryArg(patched_directory);
+    smoke.addArg("-o");
+    _ = smoke.addOutputFileArg("kb_smoke.o");
+    smoke.addFileArg(patched_directory.path(b, "kb_smoke.c"));
+    check_step.dependOn(&smoke.step);
+    b.step("kb-check", "Apply kb patches and compile-check the patched C header").dependOn(&smoke.step);
+
+    const status = b.addExecutable(.{
+        .name = "warkocz-kb-patch-status",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/kb_patch_status.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    status.root_module.addImport("kb_patches", kb_module);
+    b.step("kb-patch-status", "Report which kb patches still match the vendored upstream header").dependOn(&b.addRunArtifact(status).step);
+
+    const kb_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/kb_patches.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    kb_tests.root_module.addImport("kb_patches", kb_module);
+    tests_step.dependOn(&b.addRunArtifact(kb_tests).step);
 }
 
 fn add_lsp_test_server(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.Optimize) *std.Build.Step.Compile {

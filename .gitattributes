@@ -6,3 +6,7 @@ SPEC.html linguist-documentation=true
 # Zig's formatter requires LF, including on Windows checkouts.
 *.zig text eol=lf
 *.zon text eol=lf
+
+# Vendored third-party bytes are hash-pinned; check them out unconverted.
+third_party/kb/kb_text_shape.h -text
+third_party/kb/LICENSE -text

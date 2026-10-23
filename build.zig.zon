@@ -9,5 +9,5 @@
             .hash = "sdl-1.0.5+3.4.18-i4QD0eENqgB-RtDRu88zdUdtB6mSq5xdrs-nS9peVA3d",
         },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src", "tests", "LICENSE", "THIRD_PARTY.md" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "tests", "third_party", "LICENSE", "THIRD_PARTY.md" },
 }

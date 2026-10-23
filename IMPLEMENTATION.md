@@ -302,3 +302,12 @@ No system tool/config changes, cache reset, working-repository commits/pushes/me
 4. Extend structural movement/reordering within existing supported languages; retain exact unresolved fallback.
 5. Establish approved resource/reference protocols and native platform evidence.
 6. Obtain exact dependency/font/Nugu mapping approvals before integration; complete packaging/provenance only with honest capability boundaries.
+
+
+## kb build-time patch wiring (investigation scaffold)
+
+Vendored pristine upstream `kb_text_shape` 2.28g (`7d811ad80215eef6363d60057b0ea140215278a1`) under `third_party/kb/`; the header is embedded at compile time and `tests/kb_verify.zig` applies seventeen exact-context patches from `third_party/kb/patches.zig` into the build cache, failing with a targeted reevaluation message when a patch context disappears, becomes ambiguous, or the golden patched hash drifts.
+`zig build check`/`test` gate on it; `zig build kb-check` compile-checks the patched header with `zig cc`; `zig build kb-patch-status` reports per-patch match state for future upstream updates.
+Patches cover allocation failure propagation (context creation, arena blocks, config caches, scratchpads, font push) and the GB11 ExtendedPictographic-ZWJ transition; strict UTF-8 validation stays an application boundary.
+Evidence: hosted tests (pin, golden hash, markers, missing/ambiguous/hash-drift diagnostics), live tamper/restore drill, Windows x64 fault sweeps in the isolated spike under `C:/Users/okr/AppData/Local/Temp/warkocz-text-accessibility/kb-update/`.
+Scaffold only: no product code consumes the patched header yet and this is not dependency adoption.
