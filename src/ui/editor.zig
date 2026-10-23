@@ -1,4 +1,5 @@
 const std = @import("std");
+const graphemes = @import("graphemes.zig");
 
 pub const Direction = enum { left, right, home, end };
 pub const State = struct {
@@ -57,7 +58,13 @@ pub const State = struct {
 };
 
 pub fn editable_source_allowed(source: []const u8) bool {
-    for (source) |byte| if (byte != '\t' and byte != '\r' and byte != '\n' and (byte < 0x20 or byte > 0x7e)) return false;
+    // Valid UTF-8 without C0 controls (TAB, CR, LF excepted) and DEL; the
+    // grapheme layer owns cluster semantics, this owns byte policy.
+    if (!graphemes.validateUtf8(source)) return false;
+    for (source) |byte| {
+        const printable = byte >= 0x20 and byte != 0x7f;
+        if (!printable and byte != '\t' and byte != '\r' and byte != '\n') return false;
+    }
     return true;
 }
 
@@ -94,7 +101,9 @@ pub fn previous_boundary(source: []const u8, offset: usize) usize {
     const boundary = normalize_boundary(source, offset);
     if (boundary == 0) return 0;
     if (boundary >= 2 and source[boundary - 2] == '\r' and source[boundary - 1] == '\n') return boundary - 2;
-    return boundary - 1;
+    var back: usize = 1;
+    while (back < 4 and boundary - back > 0 and (source[boundary - back] & 0xc0) == 0x80) back += 1;
+    return boundary - back;
 }
 
 pub fn next_boundary(source: []const u8, offset: usize) usize {
@@ -102,7 +111,9 @@ pub fn next_boundary(source: []const u8, offset: usize) usize {
     const boundary = normalize_boundary(source, offset);
     if (boundary == source.len) return source.len;
     if (boundary + 1 < source.len and source[boundary] == '\r' and source[boundary + 1] == '\n') return boundary + 2;
-    return boundary + 1;
+    var ahead: usize = 1;
+    while (ahead < 4 and boundary + ahead < source.len and (source[boundary + ahead] & 0xc0) == 0x80) ahead += 1;
+    return boundary + ahead;
 }
 
 pub fn line_end(source: []const u8, offset: usize) usize {
@@ -153,12 +164,13 @@ test "selection is bounded and editable source matches insertion policy" {
     try std.testing.expectEqual(@as(usize, 3), state.replacement_range("abc").end);
     try std.testing.expect(editable_source_allowed("a\t\r\n"));
     try std.testing.expect(State.init("a\t\r\n") != null);
-    for ([_][]const u8{ "\x00", "\x1b", "\x1f", "\x7f", "\xc3\xa9" }) |unsupported| {
+    for ([_][]const u8{ "\x00", "\x1b", "\x1f", "\x7f", "\xc3" }) |unsupported| {
         try std.testing.expect(!editable_source_allowed(unsupported));
         try std.testing.expect(State.init(unsupported) == null);
         try std.testing.expect(!insertion_allowed(unsupported));
     }
     try std.testing.expect(insertion_allowed("a\t\r\n"));
+    try std.testing.expect(insertion_allowed("\xc3\xa9 \u{1F468}\u{200D}\u{1F469}"));
     try std.testing.expect(State.init("") != null);
     try std.testing.expect(!insertion_allowed(""));
 }
@@ -182,4 +194,27 @@ test "CRLF interior offsets normalize before selection or navigation" {
     try std.testing.expectEqual(@as(usize, 0), previous_boundary(source, 2));
     try std.testing.expectEqual(@as(usize, 1), line_end(source, 0));
     try std.testing.expectEqual(@as(usize, 4), line_end(source, 3));
+}
+
+test "multi-byte codepoints move as one caret step" {
+    const source = "za\u{017C}\u{00F3}\u{0142}";
+    var state = State.init(source).?;
+    try std.testing.expectEqual(@as(usize, source.len), state.cursor);
+    state.move(source, .left, false);
+    try std.testing.expectEqual(@as(usize, source.len - 2), state.cursor);
+    state.move(source, .left, false);
+    try std.testing.expectEqual(@as(usize, source.len - 4), state.cursor);
+    state.move(source, .right, true);
+    try std.testing.expectEqual(@as(usize, source.len - 2), state.cursor);
+    try std.testing.expectEqual(@as(usize, source.len - 4), state.anchor);
+}
+
+test "invalid UTF-8 sources stay read-only and invalid insertion is rejected" {
+    const broken = "bad \xc3 sequence";
+    try std.testing.expect(State.init(broken) == null);
+    try std.testing.expect(!insertion_allowed(broken));
+    try std.testing.expect(insertion_allowed("\u{017C}\u{00F3}"));
+    try std.testing.expect(editable_source_allowed("\u{1F468}\u{200D}\u{1F469} \u{4E2D}"));
+    const truncated: []const u8 = &.{ 0xed, 0xa0, 0x80 };
+    try std.testing.expect(!insertion_allowed(truncated));
 }

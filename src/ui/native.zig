@@ -1799,7 +1799,7 @@ fn action_index(action: Action) usize {
 
 fn insert_text(text: []const u8, model: *Model, opened: ?*Opened) !void {
     if (!editor.insertion_allowed(text)) {
-        model.status = "EDIT REJECTED | printable ASCII plus TAB, CR, LF only; result unchanged";
+        model.status = "EDIT REJECTED | invalid UTF-8; result unchanged";
         return;
     }
     const current = opened orelse return;
@@ -1881,7 +1881,7 @@ fn paste_clipboard(model: *Model, opened: ?*Opened) !void {
     defer sdl.SDL_free(value);
     const text = std.mem.span(value);
     if (!editor.insertion_allowed(text)) {
-        model.status = "PASTE REJECTED | clipboard is not printable ASCII plus TAB, CR, LF; result unchanged";
+        model.status = "PASTE REJECTED | clipboard is not valid UTF-8; result unchanged";
         return;
     }
     try insert_text(text, model, opened);
