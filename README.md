@@ -85,6 +85,8 @@ Review configuration before trusting it or provisioning tools.
 | `mise run test-git-native` | `zig build test-git-native` | Opt-in installed-Git inspection/mutation and local-bare-remote fixtures under `%LOCALAPPDATA%/Temp/warkocz-native-e2e`; requires absolute `WARKOCZ_TEST_GIT_EXE`. |
 | `mise run test-git-process-native` | `zig build test-git-process-native` | Windows synthetic process deadlines, output pressure/limits and descendant cleanup; no repository required. |
 | `mise run test-lsp-native` | `zig build test-lsp-native` | Synthetic LSP lifecycle, missing replies, backpressure and shutdown fixtures. |
+| `mise run kb-check` | `zig build kb-check` | Applies the vendored kb build-time patches and syntax-checks the patched C header. |
+| `mise run kb-patch-status` | `zig build kb-patch-status` | Reports which kb patches still match the pristine upstream pin; use when updating `third_party/kb`. |
 | `mise run fmt` | `zig build fmt` | Formats Zig sources. |
 | `mise run check` | `zig build check` | Checks format plus test graph. |
 

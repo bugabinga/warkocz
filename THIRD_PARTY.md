@@ -1,5 +1,36 @@
 # Third-party notices
 
+## kb text shaping header (vendored, locally patched at build time)
+
+- Package: `JimmyLefevre/kb` `kb_text_shape` `2.28g`
+- Pinned upstream commit: `7d811ad80215eef6363d60057b0ea140215278a1`
+- Source: <https://github.com/JimmyLefevre/kb>
+- Vendored file: `third_party/kb/kb_text_shape.h`, byte-identical to the pinned commit, sha256 `51a93aad590375148f35cb32e24f44ee0afcb6eb4c993749ef31143f78979a5e`
+- Local changes: applied in memory at build time from `third_party/kb/patches.zig`; the distributed source tree ships the unmodified upstream bytes plus the patch definitions
+- License: zlib
+
+```text
+zlib License
+
+(C) Copyright 2024-2025 Jimmy Lefevre
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+  claim that you wrote the original software. If you use this software
+  in a product, an acknowledgment in the product documentation would be
+  appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+  misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+```
+
 ## SDL Zig build wrapper
 
 - Package: `allyourcodebase/SDL` `tag1.0.5+3.4.18`

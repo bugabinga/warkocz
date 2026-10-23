@@ -36,3 +36,9 @@ run = "zig build test-lsp-native"
 
 [tasks.test-git-process-native]
 run = "zig build test-git-process-native"
+
+[tasks.kb-check]
+run = "zig build kb-check"
+
+[tasks.kb-patch-status]
+run = "zig build kb-patch-status"
