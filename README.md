@@ -67,6 +67,8 @@ Text-focused keys never invoke plain resolution/save actions; unsupported contro
 Windows 11 x64 is development host only.
 Ubuntu Wayland/X11 and macOS ARM64 remain required product targets without native execution evidence.
 
+Set absolute `WARKOCZ_FONT` when running the GUI to render product text through the vendored FreeType pipeline; without it the app falls back to SDL's ASCII debug font.
+
 ## Development
 
 Requires [mise](https://mise.jdx.dev/) and Zig version pinned in [mise.toml](mise.toml).

@@ -327,3 +327,10 @@ Scaffold only: no product code links the library yet and this is not dependency 
 `src/ui/native.zig` composes a single-row RGBA atlas and `gpu_text_pipeline_test` (opt-in, gated behind absolute `WARKOCZ_TEST_FONT` and the GPU suite) proves FreeType -> atlas -> GPU texture -> readback determinism and background distinctness.
 The FreeType headers are exposed to Zig through a translateC module (`src/ui/freetype_shim.h`), and the app plus native tests link the vendored static library.
 The product UI still renders through `SDL_RenderDebugText`; no product text path consumes the pipeline yet, fonts are not bundled, and this is not Unicode-editing or visual acceptance.
+
+
+## FreeType product text rendering (behind WARKOCZ_FONT)
+
+`debug_text` now routes through `draw_freetype_text`: when absolute `WARKOCZ_FONT` is set, product text draws through the bounded glyph rasterizer with per-glyph SDL textures (renderer-bound cache, drop-on-renderer-change, textures freed by SDL with the renderer) while layout keeps the fixed 8x12 grid; without the variable the SDL debug-font path is unchanged.
+GPU suites pass both ways on Windows x64: fallback preserves the pre-existing rendered hashes, and with the font every event/readback fixture stays deterministic through FreeType.
+Still open: font bundling decision, per-face advance layout, DPI/zoom integration, Unicode text through this path, and the ASCII diagnostic guardrail itself.
