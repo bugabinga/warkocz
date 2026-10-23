@@ -103,6 +103,24 @@ fn add_kb_checks(
     const verify_run = b.addRunArtifact(verify);
     const patched_directory = verify_run.addOutputDirectoryArg("kb");
 
+    const kb = b.addLibrary(.{
+        .linkage = .static,
+        .name = "kb",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    kb.root_module.addIncludePath(patched_directory);
+    kb.root_module.addCSourceFiles(.{
+        .root = b.path("src/ui"),
+        .files = &.{"kb_impl.c"},
+        .flags = &.{ "-std=c17", "-DKB_TEXT_SHAPE_IMPLEMENTATION" },
+    });
+    kb.step.dependOn(&verify_run.step);
+    add_grapheme_tests(b, target, optimize, kb, tests_step);
+
     const smoke = b.addSystemCommand(&.{ b.graph.zig_exe, "cc", "-c", "-std=c17", "-DKB_TEXT_SHAPE_IMPLEMENTATION", "-I" });
     smoke.setName("kb-c-smoke");
     smoke.addDirectoryArg(patched_directory);
@@ -133,6 +151,26 @@ fn add_kb_checks(
     kb_tests.root_module.addImport("kb_patches", kb_module);
     tests_step.dependOn(&b.addRunArtifact(kb_tests).step);
     add_freetype_checks(b, target, optimize, freetype, tests_step, check_step);
+}
+
+/// Hosted tests for the kb-backed grapheme map over the patched kb library.
+fn add_grapheme_tests(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Optimize,
+    kb: *std.Build.Step.Compile,
+    tests_step: *std.Build.Step,
+) void {
+    const grapheme_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ui/graphemes.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    grapheme_tests.root_module.linkLibrary(kb);
+    tests_step.dependOn(&b.addRunArtifact(grapheme_tests).step);
 }
 
 /// Compiles the vendored FreeType subset into a static library with the
