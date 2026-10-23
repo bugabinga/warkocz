@@ -10,3 +10,4 @@ SPEC.html linguist-documentation=true
 # Vendored third-party bytes are hash-pinned; check them out unconverted.
 third_party/kb/kb_text_shape.h -text
 third_party/kb/LICENSE -text
+third_party/freetype/** -text

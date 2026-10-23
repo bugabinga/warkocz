@@ -311,3 +311,11 @@ Vendored pristine upstream `kb_text_shape` 2.28g (`7d811ad80215eef6363d60057b0ea
 Patches cover allocation failure propagation (context creation, arena blocks, config caches, scratchpads, font push) and the GB11 ExtendedPictographic-ZWJ transition; strict UTF-8 validation stays an application boundary.
 Evidence: hosted tests (pin, golden hash, markers, missing/ambiguous/hash-drift diagnostics), live tamper/restore drill, Windows x64 fault sweeps in the isolated spike under `C:/Users/okr/AppData/Local/Temp/warkocz-text-accessibility/kb-update/`.
 Scaffold only: no product code consumes the patched header yet and this is not dependency adoption.
+
+
+## FreeType vendored subset wiring (investigation scaffold)
+
+Vendored pristine FreeType `VER-2-14-1` subset (archive SHA-256 `32427e8c…`) under `third_party/freetype/` with the minimal TrueType/SFNT/grayscale configuration from the isolated spike.
+`zig build ft-check` compiles the eight translation units into a static library and `tests/freetype_smoke.zig` gates check/test on `FT_Init_FreeType` → version 2.14.1 → `FT_Done_FreeType`.
+FTL notices, including the required `docs/FTL.TXT`, are vendored and summarized in `THIRD_PARTY.md`; the tree is `-text` in `.gitattributes` to keep upstream bytes pristine.
+Scaffold only: no product code links the library yet and this is not dependency adoption.
