@@ -161,14 +161,19 @@ fn add_grapheme_tests(
     kb: *std.Build.Step.Compile,
     tests_step: *std.Build.Step,
 ) void {
+    const grapheme_module = b.createModule(.{
+        .root_source_file = b.path("src/ui/graphemes.zig"),
+        .link_libc = true,
+    });
     const grapheme_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/ui/graphemes.zig"),
+            .root_source_file = b.path("tests/graphemes.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
         }),
     });
+    grapheme_tests.root_module.addImport("graphemes", grapheme_module);
     grapheme_tests.root_module.linkLibrary(kb);
     tests_step.dependOn(&b.addRunArtifact(grapheme_tests).step);
 }
