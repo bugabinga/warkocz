@@ -154,7 +154,7 @@ pub const Result = struct {
 };
 
 pub const Client = struct {
-    documents: [max_documents]StoredDocument = undefined,
+    documents: [max_documents]StoredDocument = @splat(.{}),
     pending_slots: [max_results]?protocol.RequestKey = .{ null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null },
     pending: protocol.Pending = undefined,
     session: protocol.Session = undefined,
@@ -309,6 +309,42 @@ pub fn digest(bytes: []const u8) Fingerprint {
     std.crypto.hash.sha2.Sha256.hash(bytes, &result, .{});
     std.debug.assert(result.len == std.crypto.hash.sha2.Sha256.digest_length);
     return result;
+}
+
+test "client init resets poisoned and previously populated document slots" {
+    const state = try std.testing.allocator.create(Client);
+    defer std.testing.allocator.destroy(state);
+    @memset(std.mem.asBytes(state), 0xa5);
+    var output: [1024]u8 = undefined;
+    for (0..2) |_| {
+        state.init();
+        try std.testing.expect(!state.running and state.identity == null);
+        for (&state.documents) |*document| {
+            // Inspect the representation first so a broken init fails before reading an invalid bool.
+            try std.testing.expectEqual(@as(u8, 0), std.mem.asBytes(&document.active)[0]);
+            try std.testing.expectEqual(@as(usize, 0), document.uri_len);
+            try std.testing.expectEqual(@as(usize, 0), document.language_len);
+            try std.testing.expectEqual(@as(usize, 0), document.text_len);
+            try std.testing.expectEqual(@as(i32, 0), document.version);
+        }
+        try std.testing.expectEqual(@as(?i32, null), state.document_version("file:///first.zig"));
+        try std.testing.expect(!state.has_document_version(1));
+        state.running = true;
+        _ = try state.initialized(&output);
+        try state.commit_initialized(.{ true, false, false, false, false });
+        for (0..max_documents) |index| {
+            var uri_storage: [64]u8 = undefined;
+            const uri = try std.fmt.bufPrint(&uri_storage, "file:///document-{d}.zig", .{index});
+            const encoded = try state.open(.{ .uri = uri, .language_id = "zig", .version = 1, .text = "const x = 1;\r\n" }, &output);
+            try std.testing.expect(std.mem.indexOf(u8, encoded, "textDocument/didOpen") != null);
+            try std.testing.expectEqual(@as(?i32, 1), state.document_version(uri));
+            try std.testing.expectEqualStrings(uri, state.documents[index].value().uri);
+            try std.testing.expectEqualStrings("const x = 1;\r\n", state.documents[index].value().text);
+        }
+        try std.testing.expectError(error.CapacityExceeded, state.open(.{ .uri = "file:///overflow.zig", .language_id = "zig", .version = 1, .text = "" }, &output));
+        try std.testing.expectEqual(@as(?i32, null), state.document_version("file:///overflow.zig"));
+        try std.testing.expectEqualStrings("const x = 1;\r\n", state.documents[0].value().text);
+    }
 }
 
 test "initialized encoding cannot publish capability before write commit" {

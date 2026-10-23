@@ -56,6 +56,13 @@ These repairs do not establish OS clipboard/input, native non-Windows execution,
 
 ## LSP lifecycle evidence
 
+`Client.init` initializes every document slot's active flag, lengths, and version through `StoredDocument` defaults; inactive payload buffers remain unread until populated.
+The regression starts with poisoned backing storage, fills all eight slots with owned URI/text snapshots, checks overflow preservation, then repeats initialization on the populated client.
+Targeted ReleaseSafe and Debug checks each passed 3/3 test-root executions.
+Final-source ReleaseSafe check/GPU passed 25/25 steps and Debug test/GPU passed 23/23; each ran 609 overlapping executions (189 core + 187 native + 233 GPU), plus executable contracts.
+Native synthetic LSP lifecycle checks passed 4/4 steps in both modes, with fifteen fixture invocations per mode.
+Linux x86_64 and macOS ARM64 core compile-only checks passed; this is not real-server or native non-Windows acceptance.
+
 Server confirmation requires an identity-bound review latched only after successful presentation.
 Exact executable/workspace paths, SHA-256 identities and the user-permission warning use bounded diagnostic-cell wrapping; incomplete/tiny viewports refuse authorization.
 Visible Confirm/Cancel controls replace covered hit targets; review-mode keyboard/text input cannot edit the hidden result.
