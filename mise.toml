@@ -15,3 +15,24 @@ run = "zig build fmt"
 
 [tasks.check]
 run = "zig build check"
+
+[tasks.test-output-native]
+run = "zig build test-output-native"
+
+[tasks.test-gpu]
+run = "zig build test-gpu"
+
+[tasks.test-lsp-gpu]
+run = "zig build test-gpu"
+
+[tasks.test-recovery-native]
+run = "zig build test-recovery-native"
+
+[tasks.test-git-native]
+run = "zig build test-git-native"
+
+[tasks.test-lsp-native]
+run = "zig build test-lsp-native"
+
+[tasks.test-git-process-native]
+run = "zig build test-git-process-native"

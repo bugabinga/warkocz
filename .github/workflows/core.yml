@@ -1,0 +1,42 @@
+name: Core checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Bounded core / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.10
+          cache: false
+          persist_github_token: false
+      - name: Formatting, ReleaseSafe core, executable contracts
+        run: mise run check -- --summary all
+      - name: Debug core and executable contracts
+        run: mise run test -- -Doptimize=debug --summary all
+      - name: Build development executable
+        run: mise run build
+
+# Core/CLI checks only: no GUI, packaged launch/input, nightly fault matrix,
+# controlled-hardware benchmark, or release acceptance is established here.
+# Never add release credentials or personal-machine runners to this workflow.

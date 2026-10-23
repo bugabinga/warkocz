@@ -7,3 +7,4 @@
 - Load matching local skills from .agents/skills for dependencies, benchmarking, or delivery.
 - Keep requirements in SPEC.html, coding rules in scoped AGENTS.md, conditional procedures in skills.
 - Report executed checks and remaining gaps; scaffolding is not implemented product capability.
+- Before branching, committing, rebasing, merging, or pushing, read the commit and history policy in CONTRIBUTING.md.
