@@ -319,3 +319,11 @@ Vendored pristine FreeType `VER-2-14-1` subset (archive SHA-256 `32427e8c…`) u
 `zig build ft-check` compiles the eight translation units into a static library and `tests/freetype_smoke.zig` gates check/test on `FT_Init_FreeType` → version 2.14.1 → `FT_Done_FreeType`.
 FTL notices, including the required `docs/FTL.TXT`, are vendored and summarized in `THIRD_PARTY.md`; the tree is `-text` in `.gitattributes` to keep upstream bytes pristine.
 Scaffold only: no product code links the library yet and this is not dependency adoption.
+
+
+## FreeType glyph pipeline (investigation scaffold)
+
+`src/ui/text.zig` rasterizes glyphs from one in-memory face at a fixed pixel size through a bounded caller-owned pool (256 slots, 32x32 cap, monotonic fill; space-like empty bitmaps cache with zero pixels).
+`src/ui/native.zig` composes a single-row RGBA atlas and `gpu_text_pipeline_test` (opt-in, gated behind absolute `WARKOCZ_TEST_FONT` and the GPU suite) proves FreeType -> atlas -> GPU texture -> readback determinism and background distinctness.
+The FreeType headers are exposed to Zig through a translateC module (`src/ui/freetype_shim.h`), and the app plus native tests link the vendored static library.
+The product UI still renders through `SDL_RenderDebugText`; no product text path consumes the pipeline yet, fonts are not bundled, and this is not Unicode-editing or visual acceptance.
