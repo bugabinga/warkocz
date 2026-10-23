@@ -80,7 +80,7 @@ Review configuration before trusting it or provisioning tools.
 | `mise run run -- merge <base> <left> <right> <output>` | `zig build run -- …` | Legacy explicit three-way invocation. |
 | `mise run test` | `zig build test` | Runs core, CLI, native non-GPU tests. |
 | `mise run test-output-native` | `zig build test-output-native` | Opt-in Windows output fixture under `%LOCALAPPDATA%/Temp/warkocz-native-e2e`. |
-| `mise run test-gpu` | `zig build test-gpu` | Opt-in SDL GPU GUI fixture, including async Complete verification. |
+| `mise run test-gpu` | `zig build test-gpu` | Opt-in SDL GPU GUI fixture, including async Complete verification. Set absolute `WARKOCZ_TEST_FONT` to also exercise the FreeType glyph pipeline proof. |
 | `mise run test-recovery-native` | `zig build test-recovery-native` | Opt-in Windows DPAPI encrypted-recovery fixture under `%LOCALAPPDATA%/Temp/warkocz-native-e2e`. |
 | `mise run test-git-native` | `zig build test-git-native` | Opt-in installed-Git inspection/mutation and local-bare-remote fixtures under `%LOCALAPPDATA%/Temp/warkocz-native-e2e`; requires absolute `WARKOCZ_TEST_GIT_EXE`. |
 | `mise run test-git-process-native` | `zig build test-git-process-native` | Windows synthetic process deadlines, output pressure/limits and descendant cleanup; no repository required. |

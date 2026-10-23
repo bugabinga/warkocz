@@ -12,6 +12,7 @@ const json_merge = @import("../engine/json_merge.zig");
 const zig_merge = @import("../engine/zig_merge.zig");
 const repository = @import("repository.zig");
 const action_registry = @import("actions.zig");
+const glyph_text = @import("text.zig");
 const editor = @import("editor.zig");
 const dialog = @import("dialog.zig");
 const ui_lsp = @import("lsp.zig");
@@ -4549,6 +4550,112 @@ fn rendered_hash(renderer: *sdl.SDL_Renderer) !u64 {
     const byte_count = std.math.mul(usize, @as(usize, @intCast(surface.*.pitch)), @as(usize, @intCast(surface.*.h))) catch return error.RenderFailed;
     const pixels: [*]const u8 = @ptrCast(surface.*.pixels.?);
     return std.hash.Wyhash.hash(0, pixels[0..byte_count]);
+}
+
+const Atlas = struct {
+    pixels: []u8,
+    width: u32,
+    height: u32,
+    stride: u32,
+    coverage: u32,
+};
+
+/// Composes one RGBA atlas row for the sample string; coverage bytes become
+/// white with matching alpha so the GPU blends only the ink.
+fn compose_glyph_atlas(arena: std.mem.Allocator, renderer: *glyph_text.Renderer, sample: []const u8) !Atlas {
+    std.debug.assert(sample.len > 0 and sample.len <= 64);
+    var placed: usize = 0;
+    var max_top: u32 = 0;
+    var max_below: u32 = 0;
+    for (sample) |byte| {
+        const glyph = try renderer.glyph(byte);
+        std.debug.assert(glyph.top >= 0 and glyph.rows >= @as(u32, @intCast(glyph.top)));
+        placed += @intCast(glyph.advance + 1);
+        max_top = @max(max_top, @as(u32, @intCast(glyph.top)));
+        max_below = @max(max_below, glyph.rows - @as(u32, @intCast(glyph.top)));
+    }
+    std.debug.assert(placed > 0 and placed <= 4096);
+    const height: u32 = max_top + max_below;
+    const stride = (placed + 3) & ~@as(usize, 3);
+    const pixels = try arena.alloc(u8, 4 * stride * height);
+    @memset(pixels, 0);
+    var coverage: u32 = 0;
+    var pen: usize = 0;
+    for (sample) |byte| {
+        const glyph = try renderer.glyph(byte);
+        const origin_row: usize = @intCast(max_top - @as(u32, @intCast(glyph.top)));
+        std.debug.assert(origin_row + glyph.rows <= height and pen + glyph.width <= stride);
+        for (0..glyph.rows) |row| {
+            for (0..glyph.width) |column| {
+                const source = glyph.pixels[row * glyph.width + column];
+                if (source == 0) continue;
+                const target = 4 * ((origin_row + row) * stride + pen + column);
+                pixels[target] = 255;
+                pixels[target + 1] = 255;
+                pixels[target + 2] = 255;
+                pixels[target + 3] = source;
+                coverage += @intFromBool(source > 127);
+            }
+        }
+        pen += @intCast(glyph.advance + 1);
+    }
+    std.debug.assert(coverage > 0);
+    return .{ .pixels = pixels, .width = @intCast(placed), .height = height, .stride = @intCast(stride), .coverage = coverage };
+}
+
+fn clear_frame(renderer: *sdl.SDL_Renderer, red: u8, green: u8, blue: u8) !void {
+    try color(renderer, red, green, blue);
+    if (!sdl.SDL_RenderClear(renderer)) return error.RenderFailed;
+}
+
+/// Deterministic FreeType→GPU pipeline proof: rasterize glyphs through the
+/// bounded pool, upload one atlas texture, draw it, and verify the readback
+/// is stable and distinct from the background. Requires WARKOCZ_TEST_FONT
+/// (absolute path); injected readback is not OS visual acceptance evidence.
+pub fn gpu_text_pipeline_test() !void {
+    const io = std.testing.io;
+    const environ: std.process.Environ = .{ .block = .global };
+    const font_path = environ.getAlloc(std.testing.allocator, "WARKOCZ_TEST_FONT") catch return error.SkipZigTest;
+    defer std.testing.allocator.free(font_path);
+    if (font_path.len == 0 or !std.fs.path.isAbsolute(font_path)) return error.SkipZigTest;
+
+    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO)) return error.GraphicsUnavailable;
+    defer sdl.SDL_Quit();
+    const window = sdl.SDL_CreateWindow("warkocz FreeType pipeline", 512, 192, sdl.SDL_WINDOW_HIDDEN) orelse return error.GraphicsUnavailable;
+    defer sdl.SDL_DestroyWindow(window);
+    const device = try create_device();
+    defer sdl.SDL_DestroyGPUDevice(device);
+    const renderer = sdl.SDL_CreateGPURenderer(device, window) orelse return error.GraphicsUnavailable;
+    defer sdl.SDL_DestroyRenderer(renderer);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const font_bytes = try std.Io.Dir.cwd().readFileAlloc(io, font_path, arena, .limited(8 << 20));
+    var pool: [glyph_text.pool_capacity]u8 = undefined;
+    var text_renderer = try glyph_text.Renderer.init(&pool, font_bytes, 16);
+    defer text_renderer.deinit();
+
+    const atlas = try compose_glyph_atlas(arena, &text_renderer, "warkocz 01");
+    const texture = sdl.SDL_CreateTexture(renderer, sdl.SDL_PIXELFORMAT_RGBA8888, sdl.SDL_TEXTUREACCESS_STATIC, @intCast(atlas.width), @intCast(atlas.height)) orelse return error.RenderFailed;
+    defer sdl.SDL_DestroyTexture(texture);
+    if (!sdl.SDL_UpdateTexture(texture, null, atlas.pixels.ptr, @intCast(atlas.stride * 4))) return error.RenderFailed;
+    if (!sdl.SDL_SetTextureBlendMode(texture, sdl.SDL_BLENDMODE_BLEND)) return error.RenderFailed;
+
+    const destination = sdl.SDL_FRect{ .x = 8, .y = 8, .w = @floatFromInt(atlas.width), .h = @floatFromInt(atlas.height) };
+    try clear_frame(renderer, 24, 28, 38);
+    if (!sdl.SDL_RenderTexture(renderer, texture, null, &destination)) return error.RenderFailed;
+    if (!sdl.SDL_RenderPresent(renderer)) return error.RenderFailed;
+    const drawn = try rendered_hash(renderer);
+    try clear_frame(renderer, 24, 28, 38);
+    if (!sdl.SDL_RenderPresent(renderer)) return error.RenderFailed;
+    const background = try rendered_hash(renderer);
+    try clear_frame(renderer, 24, 28, 38);
+    if (!sdl.SDL_RenderTexture(renderer, texture, null, &destination)) return error.RenderFailed;
+    if (!sdl.SDL_RenderPresent(renderer)) return error.RenderFailed;
+    const repeated = try rendered_hash(renderer);
+    try std.testing.expectEqual(drawn, repeated);
+    try std.testing.expect(drawn != background);
 }
 
 fn push_key(key: sdl.SDL_Keycode, modifiers: sdl.SDL_Keymod) !void {

@@ -11,6 +11,11 @@ test "SDL GPU renderer event integration is opt-in" {
     try native.gpu_event_integration_test();
 }
 
+test "SDL GPU FreeType text pipeline is opt-in and font-gated" {
+    if (!options.gpu) return;
+    try native.gpu_text_pipeline_test();
+}
+
 test "SDL GUI repository inspection accepts injected palette and selection events" {
     if (!options.gpu) return;
     try repository.gpu_repository_event_integration_test();
