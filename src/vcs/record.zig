@@ -178,15 +178,16 @@ pub fn collect(io: std.Io, absolute_git: []const u8, absolute_repository: []cons
     const git_dir = try canonicalize(io, locations.git_dir, buffers.canonical_git);
     const worktree = try canonicalize(io, locations.worktree, buffers.canonical_worktree);
     const common_dir = try canonicalize(io, locations.common_dir, buffers.canonical_common_dir);
-    const head = try head_fingerprint(io, git, repository, buffers.command, buffers.environment, buffers.config_sources);
+    // Git porcelain paths are worktree-root-relative, even when selected repository is a subdirectory.
+    const head = try head_fingerprint(io, git, worktree, buffers.command, buffers.environment, buffers.config_sources);
     const index = try path_fingerprint(io, git_dir, "index", buffers.command, buffers.file);
     const operation_state = try operation_fingerprint(io, git_dir, buffers.command, buffers.file);
-    const executable_config = try config_fingerprint(io, git, repository, buffers.command, buffers.environment, buffers.file, buffers.config_sources);
+    const executable_config = try config_fingerprint(io, git, worktree, buffers.command, buffers.environment, buffers.file, buffers.config_sources);
     var remote_summary: RemoteSummary = .{};
     var branch_target: ?BranchTarget = null;
-    const target = try target_fingerprint(io, git, repository, worktree, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources, &remote_summary, &branch_target);
-    const attributes = try attributes_fingerprint(io, git, repository, git_dir, worktree, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources);
-    const hooks = try hooks_fingerprint(io, git, repository, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources);
+    const target = try target_fingerprint(io, git, worktree, worktree, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources, &remote_summary, &branch_target);
+    const attributes = try attributes_fingerprint(io, git, worktree, git_dir, worktree, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources);
+    const hooks = try hooks_fingerprint(io, git, worktree, request, buffers.command, buffers.environment, buffers.file, buffers.config_sources);
     const executable = try executable_fingerprint(io, git, buffers.file);
     return .{ .preflight = .{
         .repository = trust.fingerprint(repository),
@@ -355,7 +356,7 @@ fn execute_status_with_lock(io: std.Io, lock_file: std.Io.File, preflight: Prefl
     const fresh = try collect(io, initial.executable, initial.repository, .{ .worktree_status = {} }, buffers);
     if (!same_preflight(preflight, fresh.preflight) or !same_preflight(initial.preflight, fresh.preflight)) return error.StalePreflight;
     if (stdout_limit == 0 or stderr_limit == 0 or status_output.len < stdout_limit) return error.OutputLimitExceeded;
-    const command = [_][]const u8{ fresh.executable, "--no-lazy-fetch", "--literal-pathspecs", "-C", fresh.repository, "--no-pager", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignored=no" };
+    const command = [_][]const u8{ fresh.executable, "--no-lazy-fetch", "--literal-pathspecs", "-C", fresh.worktree, "--no-pager", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignored=no" };
     const output = try run_status_command(io, &command, buffers.environment, buffers.config_sources, workspace, stdout_limit, stderr_limit, timeout);
     if (output.stdout.len > status_output.len) return error.OutputLimitExceeded;
     @memcpy(status_output[0..output.stdout.len], output.stdout);
@@ -394,7 +395,7 @@ fn execute_with_lock(io: std.Io, lock_file: std.Io.File, preflight: Preflight, i
     if (!same_preflight(preflight, fresh.preflight) or !same_preflight(initial.preflight, fresh.preflight)) return error.StalePreflight;
     var args: [9][]const u8 = undefined;
     const captured_start_point: ?BranchTarget = if (request == .branch_create) fresh.branch_target orelse return error.ScopeChanged else null;
-    const command = try argv_resolved(request, fresh.executable, fresh.repository, if (captured_start_point) |*value| value.oid() else null, &args);
+    const command = try argv_resolved(request, fresh.executable, fresh.worktree, if (captured_start_point) |*value| value.oid() else null, &args);
     if (stdout_limit == 0 or stderr_limit == 0) return error.OutputLimitExceeded;
     var environment_allocator = std.heap.FixedBufferAllocator.init(buffers.environment);
     var environment = try inherited_environment(environment_allocator.allocator());
@@ -573,10 +574,10 @@ fn target_fingerprint(io: std.Io, git: []const u8, repository: []const u8, workt
     switch (request) {
         .worktree_status => return trust.fingerprint("worktree status target\x00"),
         .branch_create, .branch_rename, .branch_delete => return branch_fingerprint(io, git, repository, request, path_scratch, environment, sources, branch_target),
-        .fetch, .push => return remote_fingerprint(io, git, repository, request, path_scratch, environment, sources, remote_summary),
+        .fetch, .push => return remote_fingerprint(io, git, repository, request, path_scratch, environment, file_scratch, sources, remote_summary),
         .commit => return trust.fingerprint("commit target: staged index\x00"),
         .unstage => |value| {
-            const command = [_][]const u8{ git, "-C", repository, "--no-pager", "ls-files", "-s", "-z", "--", value.path };
+            const command = [_][]const u8{ git, "--literal-pathspecs", "-C", repository, "--no-pager", "ls-files", "-s", "-z", "--", value.path };
             const output = try run(io, &command, path_scratch, environment, sources);
             if (!output.success) return error.GitFailed;
             return trust.fingerprint(output.bytes);
@@ -691,7 +692,7 @@ fn branch_fingerprint(io: std.Io, git: []const u8, repository: []const u8, reque
 
 /// Binds exact configured remote data and local refs without contacting that remote.
 /// Endpoint/refspec bytes remain only in scratch and fingerprint input.
-fn remote_fingerprint(io: std.Io, git: []const u8, repository: []const u8, request: Request, scratch: []u8, environment: []u8, sources: ConfigSources, summary: *RemoteSummary) Error!Fingerprint {
+fn remote_fingerprint(io: std.Io, git: []const u8, repository: []const u8, request: Request, scratch: []u8, environment: []u8, source_scratch: []u8, sources: ConfigSources, summary: *RemoteSummary) Error!Fingerprint {
     const remote = switch (request) {
         .fetch => |value| value.remote,
         .push => |value| value.remote,
@@ -722,9 +723,20 @@ fn remote_fingerprint(io: std.Io, git: []const u8, repository: []const u8, reque
     if (push.success) {
         if (push_refspecs_include_force_or_deletion(push.bytes, request == .push)) return error.ForcePushNotSupported;
         hash.update(push.bytes);
+        if (request == .push) {
+            if (push.bytes.len > source_scratch.len) return error.OutputLimitExceeded;
+            @memcpy(source_scratch[0..push.bytes.len], push.bytes);
+            try hash_push_sources(io, git, repository, source_scratch[0..push.bytes.len], scratch, environment, sources, &hash);
+        }
     } else if (push.exit_code != 1) return error.GitFailed;
-    const refs_command = [_][]const u8{ git, "-C", repository, "--no-pager", "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/remotes" };
-    const refs = try run(io, &refs_command, scratch, environment, sources);
+    var refs: Run = undefined;
+    if (request == .push) {
+        const refs_command = [_][]const u8{ git, "-C", repository, "--no-pager", "for-each-ref", "--format=%(refname)%00%(objectname)" };
+        refs = try run(io, &refs_command, scratch, environment, sources);
+    } else {
+        const refs_command = [_][]const u8{ git, "-C", repository, "--no-pager", "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/remotes" };
+        refs = try run(io, &refs_command, scratch, environment, sources);
+    }
     if (!refs.success) return error.GitFailed;
     hash.update(refs.bytes);
     if (request == .push) try validate_push_target(io, git, repository, remote, scratch, environment, sources, &hash);
@@ -732,6 +744,30 @@ fn remote_fingerprint(io: std.Io, git: []const u8, repository: []const u8, reque
     hash.final(&result);
     summary.* = presentation;
     return result;
+}
+
+/// Explicit sources can name pseudorefs or reflog expressions outside the ordinary ref inventory.
+/// Wildcard sources are covered by that complete inventory; Git validates their refspec syntax.
+fn hash_push_sources(io: std.Io, git: []const u8, repository: []const u8, refspecs: []const u8, scratch: []u8, environment: []u8, sources: ConfigSources, hash: *std.crypto.hash.sha2.Sha256) Error!void {
+    std.debug.assert(!overlaps(refspecs, scratch));
+    std.debug.assert(!overlaps(refspecs, environment));
+    var lines = std.mem.splitScalar(u8, refspecs, '\n');
+    while (lines.next()) |line| {
+        const refspec = std.mem.trimEnd(u8, line, "\r");
+        if (refspec.len == 0) continue;
+        const separator = std.mem.lastIndexOfScalar(u8, refspec, ':') orelse refspec.len;
+        const source = refspec[0..separator];
+        if (source.len == 0) return error.ForcePushNotSupported;
+        if (std.mem.indexOfScalar(u8, source, '*') != null) continue;
+        const command = [_][]const u8{ git, "-C", repository, "--no-pager", "rev-parse", "--verify", "--end-of-options", source };
+        const resolved = try run(io, &command, scratch, environment, sources);
+        if (!resolved.success) return error.MissingPushTarget;
+        const oid = try capture_branch_target(std.mem.trimEnd(u8, resolved.bytes, "\r\n"));
+        hash.update("resolved-push-source\x00");
+        hash.update(source);
+        hash.update("\x00");
+        hash.update(oid.oid());
+    }
 }
 
 /// Preserves fetch's legacy rejection of any `+`; push additionally rejects deletions.
@@ -1603,6 +1639,149 @@ test "configured nonorigin remote fetches and pushes only after scoped review" {
     try stale_store.grant(.{ .repository = stale.preflight.repository, .config = stale.preflight.executable_config, .scope = .fetch });
     var stale_token = Token.init(stale.preflight);
     try std.testing.expectError(error.StalePreflight, execute_revalidated(io, &stale_store, &stale_token, stale, fetch_request, buffers.value(), buffers.workspace, 4096, 4096, test_timeout()));
+}
+
+test "installed Git push rejects moved refs pseudorefs and reflog sources" {
+    if (comptime builtin.os.tag != .windows) return;
+    if (!test_git_enabled()) return;
+    const git = try test_git_executable();
+    defer std.testing.allocator.free(git);
+    const io = std.testing.io;
+    var fixture_memory: ["C:/Users/okr/AppData/Local/Temp/warkocz-native-e2e".len + 1 + 16]u8 = undefined;
+    const fixture = try test_fixture(io, &fixture_memory);
+    defer std.Io.Dir.cwd().deleteTree(io, fixture) catch {};
+    try test_git(io, git, fixture, &.{ "init", "--initial-branch=main" });
+    try test_git(io, git, fixture, &.{ "config", "user.email", "fixture@example.invalid" });
+    try test_git(io, git, fixture, &.{ "config", "user.name", "Fixture" });
+    try test_git(io, git, fixture, &.{ "commit", "--allow-empty", "-m", "base" });
+    try test_git(io, git, fixture, &.{ "commit", "--allow-empty", "-m", "next" });
+    try test_git(io, git, fixture, &.{ "init", "--bare", "remote.git" });
+    var remote_path: [512]u8 = undefined;
+    const remote = try std.fmt.bufPrint(&remote_path, "{s}/remote.git", .{fixture});
+    try test_git(io, git, fixture, &.{ "remote", "add", "satellite", remote });
+    try test_git(io, git, fixture, &.{ "config", "push.default", "current" });
+    var buffers = try TestBuffers.init(io, fixture);
+    defer buffers.deinit();
+    const request: Request = .{ .push = .{ .remote = "satellite" } };
+    try test_git(io, git, fixture, &.{ "commit", "--allow-empty", "-m", "latest" });
+    inline for (.{
+        .{ "refs/tags/v1", "refs/tags/v1" },
+        .{ "refs/review/candidate", "refs/review/candidate" },
+        .{ "FETCH_HEAD", "refs/review/from-fetch" },
+        .{ "main@{1}", "refs/review/from-reflog" },
+    }) |case| {
+        const source = case.@"0";
+        const destination = case.@"1";
+        const reflog = std.mem.eql(u8, source, "main@{1}");
+        const fetched = std.mem.eql(u8, source, "FETCH_HEAD");
+        if (fetched) try test_fetch_revision(io, git, fixture, "HEAD^") else if (!reflog) try test_git(io, git, fixture, &.{ "update-ref", source, "HEAD^" });
+        try test_git(io, git, fixture, &.{ "config", "remote.satellite.push", source ++ ":" ++ destination });
+        const reviewed = try collect(io, git, fixture, request, buffers.value());
+        if (reflog) try test_git(io, git, fixture, &.{ "reflog", "delete", "--rewrite", "main@{1}" }) else if (fetched) try test_fetch_revision(io, git, fixture, "HEAD") else try test_git(io, git, fixture, &.{ "update-ref", source, "HEAD" });
+        try std.testing.expectError(error.StalePreflight, test_execute_reviewed(io, reviewed, request, &buffers));
+        try test_git_expect_failure(io, git, remote, &.{ "show-ref", "--verify", destination });
+        const fresh = try collect(io, git, fixture, request, buffers.value());
+        try std.testing.expect(!same(reviewed.preflight.target, fresh.preflight.target));
+        try std.testing.expect(same(reviewed.preflight.head, fresh.preflight.head));
+        try std.testing.expect(same(reviewed.preflight.index, fresh.preflight.index));
+        try std.testing.expect(same(reviewed.preflight.executable_config, fresh.preflight.executable_config));
+        try std.testing.expect((try test_execute_reviewed(io, fresh, request, &buffers)).succeeded);
+        const expected = try test_git_output(io, git, fixture, &.{ "rev-parse", source });
+        defer std.testing.allocator.free(expected.stdout);
+        defer std.testing.allocator.free(expected.stderr);
+        try std.testing.expect(expected.succeeded);
+        try test_expect_exact_output(io, git, remote, &.{ "rev-parse", destination }, expected.stdout);
+    }
+}
+
+test "installed Git subdirectory review stages root paths and preserves shadows" {
+    if (comptime builtin.os.tag != .windows) return;
+    if (!test_git_enabled()) return;
+    const git = try test_git_executable();
+    defer std.testing.allocator.free(git);
+    const io = std.testing.io;
+    var fixture_memory: ["C:/Users/okr/AppData/Local/Temp/warkocz-native-e2e".len + 1 + 16]u8 = undefined;
+    const fixture = try test_fixture(io, &fixture_memory);
+    defer std.Io.Dir.cwd().deleteTree(io, fixture) catch {};
+    try test_git(io, git, fixture, &.{ "init", "--initial-branch=main" });
+    try test_git(io, git, fixture, &.{ "config", "user.email", "fixture@example.invalid" });
+    try test_git(io, git, fixture, &.{ "config", "user.name", "Fixture" });
+    var sub_path: [512]u8 = undefined;
+    const sub = try std.fmt.bufPrint(&sub_path, "{s}/sub", .{fixture});
+    try std.Io.Dir.cwd().createDir(io, sub, .default_dir);
+    try test_write(io, fixture, ".gitattributes", "file.txt -text\n");
+    try test_write(io, sub, ".gitattributes", "file.txt text eol=lf\n");
+    try test_write(io, fixture, "file.txt", "root base\r\n");
+    try test_write(io, sub, "file.txt", "shadow base\n");
+    try test_git(io, git, fixture, &.{ "add", "--", "." });
+    try test_git(io, git, fixture, &.{ "commit", "-m", "base" });
+    try test_write(io, fixture, "file.txt", "root change\r\n");
+    try test_write(io, sub, "file.txt", "shadow change\n");
+    var buffers = try TestBuffers.init(io, fixture);
+    defer buffers.deinit();
+    try test_subdirectory_status(io, git, sub, &buffers);
+    const stage: Request = .{ .stage = .{ .path = "file.txt" } };
+    const root_review = try collect(io, git, fixture, stage, buffers.value());
+    const reviewed = try collect(io, git, sub, stage, buffers.value());
+    try std.testing.expect(!same(root_review.preflight.repository, reviewed.preflight.repository));
+    try std.testing.expect(same(root_review.preflight.worktree, reviewed.preflight.worktree));
+    try std.testing.expect(same(root_review.preflight.target, reviewed.preflight.target));
+    try std.testing.expect(same(root_review.preflight.attributes, reviewed.preflight.attributes));
+    try std.testing.expect((try test_execute_reviewed(io, reviewed, stage, &buffers)).succeeded);
+    try test_expect_exact_output(io, git, fixture, &.{ "show", ":file.txt" }, "root change\r\n");
+    try test_expect_exact_output(io, git, fixture, &.{ "show", ":sub/file.txt" }, "shadow base\n");
+    const unstage: Request = .{ .unstage = .{ .path = "file.txt" } };
+    const staged = try collect(io, git, sub, unstage, buffers.value());
+    const root_staged = try collect(io, git, fixture, unstage, buffers.value());
+    try std.testing.expect(same(staged.preflight.target, root_staged.preflight.target));
+    const unstaged = try collect(io, git, sub, unstage, buffers.value());
+    try std.testing.expect((try test_execute_reviewed(io, unstaged, unstage, &buffers)).succeeded);
+    try test_expect_output(io, git, fixture, &.{ "diff", "--cached", "--name-only" }, "");
+    try test_expect_exact_output(io, git, fixture, &.{ "show", ":file.txt" }, "root base\r\n");
+    try test_expect_exact_output(io, git, fixture, &.{ "show", ":sub/file.txt" }, "shadow base\n");
+    var bytes: [64]u8 = undefined;
+    var path: [512]u8 = undefined;
+    const shadow = try files.load(io, try join_path(sub, "file.txt", &path), &bytes);
+    try std.testing.expectEqualStrings("shadow change\n", shadow.bytes);
+    const root = try files.load(io, try join_path(fixture, "file.txt", &path), &bytes);
+    try std.testing.expectEqualStrings("root change\r\n", root.bytes);
+}
+
+fn test_fetch_revision(io: std.Io, git: []const u8, fixture: []const u8, revision: []const u8) !void {
+    const output = try test_git_output(io, git, fixture, &.{ "rev-parse", "--verify", revision });
+    defer std.testing.allocator.free(output.stdout);
+    defer std.testing.allocator.free(output.stderr);
+    try std.testing.expect(output.succeeded);
+    try test_git(io, git, fixture, &.{ "fetch", "--no-tags", ".", std.mem.trimEnd(u8, output.stdout, "\r\n") });
+}
+
+fn test_expect_exact_output(io: std.Io, git: []const u8, fixture: []const u8, tail: []const []const u8, expected: []const u8) !void {
+    const output = try test_git_output(io, git, fixture, tail);
+    defer std.testing.allocator.free(output.stdout);
+    defer std.testing.allocator.free(output.stderr);
+    try std.testing.expect(output.succeeded);
+    try std.testing.expectEqualStrings(expected, output.stdout);
+}
+
+fn test_execute_reviewed(io: std.Io, reviewed: Collected, request: Request, buffers: *TestBuffers) !Result {
+    var grants: [1]trust.Grant = undefined;
+    var store = trust.Store.init(&grants);
+    try store.grant(.{ .repository = reviewed.preflight.repository, .config = reviewed.preflight.executable_config, .scope = scope(request) });
+    var token = Token.init(reviewed.preflight);
+    return execute_revalidated(io, &store, &token, reviewed, request, buffers.value(), buffers.workspace, 4096, 4096, test_timeout());
+}
+
+fn test_subdirectory_status(io: std.Io, git: []const u8, repository: []const u8, buffers: *TestBuffers) !void {
+    const reviewed = try collect(io, git, repository, .{ .worktree_status = {} }, buffers.value());
+    var grants: [1]trust.Grant = undefined;
+    var store = trust.Store.init(&grants);
+    try store.grant(.{ .repository = reviewed.preflight.repository, .config = reviewed.preflight.executable_config, .scope = .worktree_status });
+    var token = Token.init(reviewed.preflight);
+    var status: [4096]u8 = undefined;
+    const result = try execute_worktree_status_revalidated(io, &store, &token, reviewed, buffers.value(), buffers.workspace, &status, status.len, 4096, test_timeout());
+    try std.testing.expect(result.succeeded);
+    try std.testing.expect(std.mem.indexOf(u8, status[0..result.stdout_bytes], " file.txt\x00") != null);
+    try std.testing.expect(std.mem.indexOf(u8, status[0..result.stdout_bytes], " sub/file.txt\x00") != null);
 }
 
 test "installed Git push preflight rejects deletion and mirror before transport" {
