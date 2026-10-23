@@ -3158,12 +3158,153 @@ fn color(renderer: *sdl.SDL_Renderer, red: u8, green: u8, blue: u8) !void {
     if (!sdl.SDL_SetRenderDrawColor(renderer, red, green, blue, 255)) return error.RenderFailed;
 }
 
+const ui_font_pixel_size = 12;
+const ui_font_cell_width = glyph_width;
+const ui_font_row_baseline = 10;
+
+/// Renderer-bound FreeType glyph textures for product text. Textures belong
+/// to the SDL renderer, which frees them when it is destroyed; the cache
+/// therefore drops (never destroys) textures when the renderer changes.
+/// The pool and font bytes live for the process lifetime via the C allocator
+/// because SDL keeps the textures alive for the renderer's lifetime.
+const UiFont = struct {
+    renderer: *sdl.SDL_Renderer,
+    rasterizer: glyph_text.Renderer,
+    pool: []u8,
+    font_bytes: []u8,
+    ascent: c_int,
+    textures: [glyph_text.slot_count]?CachedGlyphTexture,
+    next_eviction: usize,
+
+    fn drop(self: *UiFont) void {
+        self.rasterizer.deinit();
+        std.heap.c_allocator.free(self.pool);
+        std.heap.c_allocator.free(self.font_bytes);
+        self.* = undefined;
+    }
+
+    fn texture(self: *UiFont, codepoint: u8) !*sdl.SDL_Texture {
+        for (self.textures) |maybe| {
+            if (maybe) |cached| {
+                if (cached.codepoint == codepoint) return cached.texture;
+            }
+        }
+        const glyph = try self.rasterizer.glyph(codepoint);
+        const index = self.next_eviction;
+        self.next_eviction = (index + 1) % glyph_text.slot_count;
+        if (self.textures[index]) |stale| {
+            sdl.SDL_DestroyTexture(stale.texture);
+        }
+        var pixels: [glyph_text.max_glyph_width * glyph_text.max_glyph_rows * 4]u8 = @splat(0);
+        std.debug.assert(glyph.width > 0 and glyph.rows > 0 and glyph.pixels.len == @as(usize, glyph.width) * glyph.rows);
+        for (0..glyph.rows) |row| {
+            for (0..glyph.width) |column| {
+                const coverage = glyph.pixels[row * glyph.width + column];
+                const target = 4 * (row * glyph_text.max_glyph_width + column);
+                pixels[target] = 255;
+                pixels[target + 1] = 255;
+                pixels[target + 2] = 255;
+                pixels[target + 3] = coverage;
+            }
+        }
+        const created = sdl.SDL_CreateTexture(
+            self.renderer,
+            sdl.SDL_PIXELFORMAT_RGBA8888,
+            sdl.SDL_TEXTUREACCESS_STATIC,
+            @intCast(glyph.width),
+            @intCast(glyph.rows),
+        ) orelse return error.RenderFailed;
+        if (!sdl.SDL_UpdateTexture(created, null, &pixels, glyph_text.max_glyph_width * 4)) {
+            sdl.SDL_DestroyTexture(created);
+            return error.RenderFailed;
+        }
+        if (!sdl.SDL_SetTextureScaleMode(created, sdl.SDL_SCALEMODE_NEAREST)) return error.RenderFailed;
+        self.textures[index] = .{ .codepoint = codepoint, .texture = created };
+        return created;
+    }
+};
+
+const CachedGlyphTexture = struct { codepoint: u8, texture: *sdl.SDL_Texture };
+
+var ui_font: ?UiFont = null;
+var ui_font_unavailable = false;
+
+/// Loads the developer-provided font once; without WARKOCZ_FONT the product
+/// falls back to SDL's debug font. The font is presentation-only and never
+/// touches authoritative bytes.
+fn ensure_ui_font(renderer: *sdl.SDL_Renderer) void {
+    if (ui_font) |*existing| {
+        if (existing.renderer == renderer) return;
+        existing.drop();
+        ui_font = null;
+    }
+    if (ui_font_unavailable) return;
+    var threaded: std.Io.Threaded = .init(std.heap.c_allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const environ: std.process.Environ = .{ .block = .global };
+    const font_path = environ.getAlloc(std.heap.c_allocator, "WARKOCZ_FONT") catch return;
+    defer std.heap.c_allocator.free(font_path);
+    if (font_path.len == 0 or !std.fs.path.isAbsolute(font_path)) {
+        ui_font_unavailable = true;
+        return;
+    }
+    const font_bytes = std.Io.Dir.cwd().readFileAlloc(io, font_path, std.heap.c_allocator, .limited(8 << 20)) catch {
+        ui_font_unavailable = true;
+        return;
+    };
+    const pool = std.heap.c_allocator.alloc(u8, glyph_text.pool_capacity) catch {
+        std.heap.c_allocator.free(font_bytes);
+        ui_font_unavailable = true;
+        return;
+    };
+    ui_font = .{
+        .renderer = renderer,
+        .rasterizer = glyph_text.Renderer.init(pool, font_bytes, ui_font_pixel_size) catch {
+            std.heap.c_allocator.free(pool);
+            std.heap.c_allocator.free(font_bytes);
+            ui_font_unavailable = true;
+            return;
+        },
+        .pool = pool,
+        .font_bytes = font_bytes,
+        .ascent = ui_font_row_baseline,
+        .textures = @splat(null),
+        .next_eviction = 0,
+    };
+}
+
+fn draw_freetype_text(renderer: *sdl.SDL_Renderer, x: f32, y: f32, value: []const u8) !bool {
+    ensure_ui_font(renderer);
+    const font = &(ui_font orelse return false);
+    std.debug.assert(font.renderer == renderer);
+    var pen: f32 = 0;
+    for (value) |byte| {
+        defer pen += ui_font_cell_width;
+        if (byte < 0x20 or byte > 0x7e) continue;
+        const glyph = font.rasterizer.glyph(byte) catch continue;
+        if (glyph.width == 0 or glyph.rows == 0) continue;
+        const texture = try font.texture(byte);
+        const origin_x = x + pen + @as(f32, @floatFromInt(glyph.left));
+        const origin_y = y + @as(f32, @floatFromInt(font.ascent - glyph.top));
+        const destination = sdl.SDL_FRect{
+            .x = origin_x,
+            .y = origin_y,
+            .w = @floatFromInt(glyph.width),
+            .h = @floatFromInt(glyph.rows),
+        };
+        if (!sdl.SDL_RenderTexture(renderer, texture, null, &destination)) return error.RenderFailed;
+    }
+    return true;
+}
+
 fn debug_text(renderer: *sdl.SDL_Renderer, x: f32, y: f32, value: []const u8) !void {
     std.debug.assert(std.math.isFinite(x) and std.math.isFinite(y));
     var buffer: [257:0]u8 = undefined;
     const length = diagnostic_line(value[0..@min(value.len, input_capacity)], 0, buffer[0..256]);
     buffer[length] = 0;
     std.debug.assert(length < buffer.len);
+    if (try draw_freetype_text(renderer, x, y, buffer[0..length])) return;
     if (!sdl.SDL_RenderDebugText(renderer, x, y, &buffer)) return error.RenderFailed;
 }
 
