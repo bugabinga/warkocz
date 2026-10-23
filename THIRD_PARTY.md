@@ -96,3 +96,22 @@ freely, subject to the following restrictions:
    be misrepresented as being the original software.
 3. This notice may not be removed or altered from any source distribution.
 ```
+
+## FreeType (vendored subset)
+
+- Package: FreeType `VER-2-14-1`
+- Source archive: `freetype-2.14.1.tar.xz`, SHA-256 `32427e8c471ac095853212a37aef816c60b42052d4d9e48230bab3bdf2936ccc`
+- Source: <https://freetype.org/>
+- Vendored location: `third_party/freetype/`, byte-identical subset (`include/`, `src/base/`, `src/sfnt/`, `src/truetype/`, `src/smooth/`, `docs/FTL.TXT`)
+- Local changes: none to upstream files; a minimal build configuration lives in `third_party/freetype/config/`
+- License: FreeType License (FTL); `docs/FTL.TXT` is vendored as the FTL requires
+- Credit: portions of this software are copyright © The FreeType Project (www.freetype.org). All rights reserved.
+
+```text
+Portions of this software are copyright © The FreeType Project
+(www.freetype.org). All rights reserved.
+
+The FreeType Project is distributed under the FreeType License; the
+complete license text is vendored at `third_party/freetype/docs/FTL.TXT`
+and `third_party/freetype/LICENSE.TXT`.
+```

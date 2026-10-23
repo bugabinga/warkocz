@@ -127,6 +127,60 @@ fn add_kb_checks(
     });
     kb_tests.root_module.addImport("kb_patches", kb_module);
     tests_step.dependOn(&b.addRunArtifact(kb_tests).step);
+    add_freetype_checks(b, target, optimize, tests_step, check_step);
+}
+
+/// Compiles the vendored FreeType subset into a static library with the
+/// minimal vendored configuration and gates it behind a version smoke test.
+fn add_freetype_checks(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Optimize,
+    tests_step: *std.Build.Step,
+    check_step: *std.Build.Step,
+) void {
+    const freetype = b.addLibrary(.{
+        .linkage = .static,
+        .name = "freetype",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    freetype.root_module.addIncludePath(b.path("third_party/freetype/include"));
+    freetype.root_module.addIncludePath(b.path("third_party/freetype"));
+    freetype.root_module.addCSourceFiles(.{
+        .root = b.path("third_party/freetype"),
+        .files = &.{
+            "src/base/ftbase.c",
+            "src/base/ftbitmap.c",
+            "src/base/ftinit.c",
+            "src/base/ftsystem.c",
+            "src/base/ftdebug.c",
+            "src/sfnt/sfnt.c",
+            "src/truetype/truetype.c",
+            "src/smooth/smooth.c",
+        },
+        .flags = &.{
+            "-std=c17",
+            "-DFT2_BUILD_LIBRARY",
+            "-DFT_CONFIG_MODULES_H=<config/ftmodule.h>",
+            "-DFT_CONFIG_OPTIONS_H=<config/ftoption.h>",
+        },
+    });
+    check_step.dependOn(&freetype.step);
+    b.step("ft-check", "Compile the vendored FreeType subset").dependOn(&freetype.step);
+
+    const smoke = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/freetype_smoke.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    smoke.root_module.linkLibrary(freetype);
+    tests_step.dependOn(&b.addRunArtifact(smoke).step);
 }
 
 fn add_lsp_test_server(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.Optimize) *std.Build.Step.Compile {

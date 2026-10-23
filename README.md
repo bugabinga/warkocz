@@ -87,6 +87,7 @@ Review configuration before trusting it or provisioning tools.
 | `mise run test-lsp-native` | `zig build test-lsp-native` | Synthetic LSP lifecycle, missing replies, backpressure and shutdown fixtures. |
 | `mise run kb-check` | `zig build kb-check` | Applies the vendored kb build-time patches and syntax-checks the patched C header. |
 | `mise run kb-patch-status` | `zig build kb-patch-status` | Reports which kb patches still match the pristine upstream pin; use when updating `third_party/kb`. |
+| `mise run ft-check` | `zig build ft-check` | Compiles the vendored FreeType subset with the minimal vendored configuration. |
 | `mise run fmt` | `zig build fmt` | Formats Zig sources. |
 | `mise run check` | `zig build check` | Checks format plus test graph. |
 

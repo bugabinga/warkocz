@@ -42,3 +42,6 @@ run = "zig build kb-check"
 
 [tasks.kb-patch-status]
 run = "zig build kb-patch-status"
+
+[tasks.ft-check]
+run = "zig build ft-check"
