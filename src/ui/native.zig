@@ -3242,7 +3242,16 @@ fn ensure_ui_font(renderer: *sdl.SDL_Renderer) void {
     var threaded: std.Io.Threaded = .init(std.heap.c_allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
-    const environ: std.process.Environ = .{ .block = .global };
+    // .global only exists in the Windows Environ block; POSIX reads libc's
+    // environ the same way std.start does.
+    const environ: std.process.Environ = switch (@import("builtin").os.tag) {
+        .windows => .{ .block = .global },
+        else => blk: {
+            var count: usize = 0;
+            while (std.c.environ[count] != null) : (count += 1) {}
+            break :blk .{ .block = .{ .slice = @ptrCast(std.c.environ[0..count :null]) } };
+        },
+    };
     const font_path = environ.getAlloc(std.heap.c_allocator, "WARKOCZ_FONT") catch return;
     defer std.heap.c_allocator.free(font_path);
     if (font_path.len == 0 or !std.fs.path.isAbsolute(font_path)) {
